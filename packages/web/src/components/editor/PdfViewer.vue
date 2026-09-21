@@ -77,7 +77,7 @@ onBeforeUnmount(() => revokeCurrentBlob());
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #525659;
+  background: var(--surface-2);
   overflow: hidden;
 }
 
@@ -90,16 +90,16 @@ onBeforeUnmount(() => revokeCurrentBlob());
   align-items: center;
   justify-content: center;
   height: 100%;
-  background: var(--editor-bg, #1e1e1e);
-  color: var(--text-secondary, #888);
+  background: var(--surface-2);
+  color: var(--text-muted);
 }
 
 .pdf-error {
-  padding: 16px;
-  color: #e74c3c;
-  background: #fdf0ef;
-  border-top: 1px solid #f5c6cb;
-  font-size: 0.85em;
+  padding: var(--space-4);
+  color: var(--danger);
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--font-sm);
   flex-shrink: 0;
 }
 </style>

@@ -59,71 +59,85 @@ function toggle(id: string) {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-secondary);
+  background: var(--surface-1);
   overflow: hidden;
 }
+
 .sb-header {
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-color);
+  padding: var(--space-3) var(--space-3) var(--space-2);
 }
+
 .sb-title {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-secondary);
+  letter-spacing: 0.4px;
+  color: var(--text-muted);
 }
+
 .sb-empty {
-  padding: 20px 12px;
-  font-size: 13px;
-  color: var(--text-secondary);
+  padding: var(--space-4) var(--space-3);
+  font-size: var(--font-sm);
+  color: var(--text-muted);
   text-align: center;
 }
+
 .sb-section {
   display: flex;
   flex-direction: column;
-  flex: 1;
+  flex: 0 0 auto;
   min-height: 0;
-  border-bottom: 1px solid var(--border-color);
 }
+
+.sb-section:first-of-type {
+  flex: 1 1 auto;
+}
+
 .sb-section-header {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
   cursor: pointer;
   user-select: none;
-  font-size: 12px;
-  color: var(--text-secondary);
-  background: var(--bg-tertiary);
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  background: transparent;
+  transition: color var(--transition-fast);
 }
+
 .sb-section-header:hover {
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
+
 .sb-section-arrow {
   font-size: 8px;
   width: 12px;
   flex-shrink: 0;
-  color: var(--text-secondary);
+  color: var(--text-muted);
 }
+
 .sb-section-label {
-  font-weight: 600;
+  font-weight: var(--weight-medium);
   text-transform: uppercase;
   letter-spacing: 0.3px;
 }
+
 .sb-section-count {
-  color: var(--text-secondary);
-  font-weight: 400;
+  color: var(--text-muted);
+  font-weight: var(--weight-normal);
 }
+
 .sb-section-body {
-  flex: 1;
+  flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
 }
+
 .sb-section-empty {
-  padding: 12px;
-  font-size: 12px;
-  color: var(--text-secondary);
+  padding: var(--space-3);
+  font-size: var(--font-sm);
+  color: var(--text-muted);
   font-style: italic;
 }
 </style>

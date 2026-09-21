@@ -7,17 +7,23 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts",
       "require": "./dist/index.js",
-      "default": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./sanitize": {
+      "types": "./dist/sanitize.d.ts",
+      "require": "./dist/sanitize.js",
+      "default": "./dist/sanitize.js"
     }
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:typecheck": "tsc -p tsconfig.test.json --noEmit"
+    "test:typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "smoke:fc": "node scripts/smoke-fc.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.19.41",

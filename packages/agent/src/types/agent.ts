@@ -1,4 +1,6 @@
 import type { AgentMessage } from './message';
+import type { ModelCapabilities } from '../llm/model-capabilities';
+import type { PermissionMode } from '../permission';
 
 /** Agent 工作模式 */
 export type AgentMode = 'build' | 'plan';
@@ -14,6 +16,12 @@ export interface AgentConfig {
   maxTokens?: number;
   /** 是否启用 bash 工具(默认 true)。远程部署建议关闭。 */
   enableBash?: boolean;
+  /** 工具协议：xml=标签解析；fc=OpenAI tools；auto=按能力表/provider 选择 */
+  toolProtocol?: 'xml' | 'fc' | 'auto';
+  /** 覆盖内置 model 能力表 */
+  modelCapabilities?: ModelCapabilities;
+  /** 权限模式；默认 suggest（写/bash 需确认） */
+  permissionMode?: PermissionMode;
 }
 
 /** Agent 预置定义 —— 绑定提示词、模型、温度等预设 */
@@ -47,6 +55,8 @@ export interface AgentResult {
   /** 流式期间累积的 thinking 文本(reasoning models) */
   thinking?: string;
   error?: string;
+  /** 本轮停止原因（maxTurns / 取消 / 正常收尾等） */
+  stopReason?: 'stop' | 'max_turns' | 'aborted' | 'empty' | 'error';
 }
 
 /** 会话消息 —— 记录每条消息来源 Agent */

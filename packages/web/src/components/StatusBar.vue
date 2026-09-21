@@ -83,40 +83,48 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   height: 22px;
-  background: var(--statusbar-bg);
-  padding: 0 10px;
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-subtle);
+  padding: 0 var(--space-3);
   flex-shrink: 0;
   user-select: none;
-  font-size: 12px;
-  color: var(--statusbar-text);
+  font-size: var(--font-sm);
+  color: var(--text-secondary);
 }
+
 .status-bar-left,
 .status-bar-right {
   display: flex;
   align-items: center;
   height: 100%;
-  gap: 2px;
+  gap: var(--space-1);
 }
+
 .status-item {
-  padding: 0 6px;
+  padding: 0 var(--space-2);
   height: 100%;
   display: flex;
   align-items: center;
   white-space: nowrap;
+  border-radius: var(--radius-sm);
 }
+
 .status-item:hover {
-  background: rgba(128, 128, 128, 0.12);
+  background: var(--surface-hover);
 }
+
 .status-ln-col {
   cursor: default;
 }
+
 .status-mode {
-  font-size: 11px;
+  font-size: var(--font-xs);
   text-transform: uppercase;
-  font-weight: 500;
+  font-weight: var(--weight-medium);
 }
+
 .status-notification {
-  font-size: 11px;
+  font-size: var(--font-xs);
   opacity: 0.7;
 }
 </style>

@@ -3,6 +3,7 @@ import type { ITool, ToolInputSchema, ToolExecutionContext, ToolAnnotations } fr
 import { createLogger } from '../../logger';
 import { LOG_CATEGORY } from '../../log-categories';
 import { resolveKey } from '../_shared/path';
+import { buildEditHunk } from '../_shared/file-change';
 import {
   FILE_EDIT_TOOL_NAME,
   FILE_EDIT_TOOL_DESCRIPTION,
@@ -104,6 +105,7 @@ export class FileEditTool implements ITool {
       updated = original.replace(oldString, newString);
     }
 
+    context.onFileBackup?.(target, original, true);
     writeFileSync(absPath, updated, 'utf-8');
 
     // 写完后刷新 readFileState:LLM 自己刚改完,当然知道当前内容,
@@ -113,6 +115,17 @@ export class FileEditTool implements ITool {
     const oldBytes = Buffer.byteLength(original, 'utf-8');
     const newBytes = Buffer.byteLength(updated, 'utf-8');
     const delta = newBytes - oldBytes;
+
+    const firstIdx = original.indexOf(oldString);
+    const hunk = firstIdx >= 0 ? buildEditHunk(original, oldString, newString, firstIdx) : undefined;
+    context.onFileChange?.({
+      kind: 'edit',
+      path: target,
+      oldSize: oldBytes,
+      newSize: newBytes,
+      hunks: hunk ? [hunk] : [],
+      summary: `edit ${target} (${replaceAll ? matchCount : 1} replace)`,
+    });
 
     log.info(`file_edit done: ${matchCount} occurrence(s) replaced, ${delta >= 0 ? '+' : ''}${delta} bytes, ${Date.now() - startMs}ms`, {
       path: target,

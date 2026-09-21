@@ -30,6 +30,29 @@ export interface ToolAnnotations {
   openWorldHint?: boolean;
 }
 
+/** 单个文件改动的简化 hunk（够 Inline Diff / 确认预览用，非完整 git diff） */
+export interface FileChangeHunk {
+  /** 原文件中改动起始行（1-based，估算） */
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  /** 单 hunk 文本上限由上报方截断 */
+  oldText?: string;
+  newText?: string;
+}
+
+/** 工具成功写盘后的结构化变更元数据 */
+export interface FileChangeMeta {
+  kind: 'edit' | 'write' | 'create';
+  /** 相对 workspaceRoot 的路径（与工具参数 path 一致） */
+  path: string;
+  oldSize?: number;
+  newSize?: number;
+  hunks?: FileChangeHunk[];
+  summary: string;
+}
+
 /** 工具执行上下文 */
 export interface ToolExecutionContext {
   workspaceRoot: string;
@@ -43,6 +66,20 @@ export interface ToolExecutionContext {
    * 不引入 staleness 校验。
    */
   readFileState?: Set<string>;
+  /** 写盘成功后上报（Agent 收集进 ToolCallRecord / 事件） */
+  onFileChange?: (meta: FileChangeMeta) => void;
+  /** 写盘前备份，用于会话级撤销 */
+  onFileBackup?: (path: string, previousContent: string | null, existed: boolean) => void;
+}
+
+/** OpenAI Chat Completions tools[] 单项（function calling） */
+export interface OpenAIFunctionDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: ToolInputSchema;
+  };
 }
 
 /** 工具接口 —— 内置工具和 MCP 工具的统一契约 */
@@ -69,6 +106,8 @@ export interface ITool {
    * 'children' 适合承载多段文本参数（如 file_edit 的 old/new 两段代码）。
    */
   readonly body?: 'content' | 'children';
+  /** 导出为 OpenAI tools[] 条目；未实现时由 toolToOpenAIFunction 默认生成 */
+  toOpenAIFunction?(): OpenAIFunctionDefinition;
   /** 执行工具，返回注入到对话中的结果文本 */
   execute(params: Record<string, string>, context: ToolExecutionContext): Promise<string>;
 }

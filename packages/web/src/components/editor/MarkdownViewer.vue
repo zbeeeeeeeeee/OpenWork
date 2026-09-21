@@ -21,6 +21,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue';
 import * as monaco from 'monaco-editor';
 import { setEditorInstance, clearEditorInstance } from '../../services/editorInstance';
+import { useSettingsStore } from '../../stores/settings';
 import { renderMarkdown } from '../../services/markdown';
 
 const props = defineProps<{
@@ -31,6 +32,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   'content-change': [content: string];
 }>();
+
+const settings = useSettingsStore();
 
 type MarkdownMode = 'code' | 'preview' | 'split';
 const mode = ref<MarkdownMode>('split');
@@ -46,7 +49,7 @@ onMounted(() => {
   editor = monaco.editor.create(editorPaneRef.value, {
     value: props.content,
     language: 'markdown',
-    theme: 'vs-dark',
+    theme: settings.theme === 'light' ? 'vs' : 'vs-dark',
     automaticLayout: true,
     minimap: { enabled: false },
     fontSize: 14,
@@ -80,6 +83,12 @@ watch(() => props.language, (lang) => {
   }
 });
 
+watch(() => settings.theme, (t) => {
+  if (editor) {
+    monaco.editor.setTheme(t === 'light' ? 'vs' : 'vs-dark');
+  }
+});
+
 watch(mode, (newMode) => {
   if (newMode === 'split' || newMode === 'code') {
     nextTick(() => {
@@ -102,37 +111,38 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
+  background: var(--surface-2);
 }
 
 .viewer-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
-  background: var(--bg-tertiary, #252526);
-  border-bottom: 1px solid var(--border-color, #3c3c3c);
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
 .viewer-toolbar button {
-  padding: 4px 12px;
-  font-size: 12px;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-sm);
   background: transparent;
   border: 1px solid transparent;
-  color: var(--text-secondary, #999);
+  color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
 .viewer-toolbar button:hover {
-  color: var(--text-primary, #ccc);
-  background: var(--bg-hover, #3e3e3e);
+  color: var(--text-primary);
+  background: var(--surface-hover);
 }
 
 .viewer-toolbar button.active {
-  color: var(--text-primary, #ccc);
-  background: var(--bg-secondary, #2d2d2d);
-  border-color: var(--border-color, #3c3c3c);
+  color: var(--text-primary);
+  background: var(--surface-selected);
 }
 
 .viewer-content {
@@ -157,133 +167,24 @@ onBeforeUnmount(() => {
 
 .split-divider {
   width: 4px;
-  background: var(--border-color, #3c3c3c);
+  background: var(--border-subtle);
   cursor: col-resize;
   flex-shrink: 0;
 }
 
 .split-divider:hover {
-  background: var(--accent-color, #007acc);
+  background: var(--accent);
 }
 
 .preview-pane {
-  background: var(--bg-primary, #1e1e1e);
+  background: var(--surface-2);
   overflow-y: auto;
-  padding: 16px 24px;
+  padding: var(--space-4);
 }
 
 .markdown-body {
-  color: var(--text-primary, #ccc);
+  color: var(--text-primary);
   line-height: 1.7;
-  font-size: 14px;
-}
-
-.markdown-body :deep(h1),
-.markdown-body :deep(h2),
-.markdown-body :deep(h3),
-.markdown-body :deep(h4) {
-  color: var(--text-primary, #ccc);
-  margin-top: 24px;
-  margin-bottom: 12px;
-  font-weight: 600;
-  border-bottom: 1px solid var(--border-color, #3c3c3c);
-  padding-bottom: 6px;
-}
-
-.markdown-body :deep(h1) { font-size: 24px; }
-.markdown-body :deep(h2) { font-size: 20px; }
-.markdown-body :deep(h3) { font-size: 16px; }
-
-.markdown-body :deep(p) {
-  margin-bottom: 12px;
-}
-
-.markdown-body :deep(pre) {
-  background: var(--bg-secondary, #2d2d2d);
-  border: 1px solid var(--border-color, #3c3c3c);
-  border-radius: 4px;
-  padding: 12px 16px;
-  overflow-x: auto;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.markdown-body :deep(code) {
-  font-family: 'Consolas', 'Monaco', monospace;
-  font-size: 13px;
-}
-
-.markdown-body :deep(p > code) {
-  background: var(--bg-secondary, #2d2d2d);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 13px;
-}
-
-.markdown-body :deep(blockquote) {
-  border-left: 3px solid var(--accent-color, #007acc);
-  padding: 4px 16px;
-  margin: 12px 0;
-  color: var(--text-secondary, #969696);
-  background: var(--bg-secondary, #2d2d2d);
-  border-radius: 0 4px 4px 0;
-}
-
-.markdown-body :deep(ul),
-.markdown-body :deep(ol) {
-  padding-left: 24px;
-  margin-bottom: 12px;
-}
-
-.markdown-body :deep(li) {
-  margin-bottom: 4px;
-}
-
-.markdown-body :deep(a) {
-  color: var(--accent-color, #007acc);
-  text-decoration: none;
-}
-
-.markdown-body :deep(a:hover) {
-  text-decoration: underline;
-}
-
-.markdown-body :deep(hr) {
-  border: none;
-  border-top: 1px solid var(--border-color, #3c3c3c);
-  margin: 20px 0;
-}
-
-.markdown-body :deep(table) {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 12px 0;
-}
-
-.markdown-body :deep(th),
-.markdown-body :deep(td) {
-  border: 1px solid var(--border-color, #3c3c3c);
-  padding: 8px 12px;
-  text-align: left;
-}
-
-.markdown-body :deep(th) {
-  background: var(--bg-secondary, #2d2d2d);
-  font-weight: 600;
-}
-
-.markdown-body :deep(img) {
-  max-width: 100%;
-  border-radius: 4px;
-}
-
-.markdown-body :deep(.katex) {
-  font-size: 1.1em;
-}
-
-.markdown-body :deep(.katex-display) {
-  margin: 16px 0;
-  overflow-x: auto;
-  overflow-y: hidden;
+  font-size: var(--font-md);
 }
 </style>

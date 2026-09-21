@@ -13,6 +13,28 @@ import {
 
 const log = createLogger(LOG_CATEGORY.FILE_OPS);
 
+/** Windows PowerShell 强制 UTF-8，避免中文路径/输出乱码 */
+function wrapPowerShellUtf8(command: string): string {
+  return (
+    "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; " +
+    "$OutputEncoding=[System.Text.Encoding]::UTF8; " +
+    "chcp 65001 | Out-Null; " +
+    command
+  );
+}
+
+/** 判断是否像「在 PowerShell 上跑了 Unix 命令」而失败 */
+function looksLikeUnixCommandOnPowerShell(command: string, stderr: string): boolean {
+  if (process.platform !== 'win32') return false;
+  if (!stderr) return false;
+  const unixy = /(^|\s)(ls(\s+-la?)?|find\s|head\s|pwd|cat\s|grep\s|which\s|export\s)/i.test(command);
+  const failHint =
+    /ParameterBindingException|CommandNotFoundException|is not recognized|FIND:|The term .* is not recognized/i.test(
+      stderr,
+    );
+  return unixy && failHint;
+}
+
 const inputSchema: ToolInputSchema = {
   type: 'object',
   properties: {
@@ -41,21 +63,25 @@ export class BashTool implements ITool {
   readonly annotations = annotations;
 
   async execute(params: Record<string, string>, context: ToolExecutionContext): Promise<string> {
-    const command = params.command.trim();
+    const command = (params.command || '').trim();
     if (!command) return 'Error: No command provided';
 
     const timeout = this.resolveTimeout(params.timeout);
     const description = params.description || '';
     const startMs = Date.now();
     const cmdPreview = command.length > 100 ? command.slice(0, 100) + '...' : command;
+    const isWin = process.platform === 'win32';
+    // Windows PowerShell 默认按系统代码页(中文机常为 GBK)输出，中文路径/文件名会变乱码
+    const wrapped = isWin ? wrapPowerShellUtf8(command) : command;
 
     return new Promise<string>(resolve => {
-      const child = exec(command, {
+      const child = exec(wrapped, {
         cwd: context.workspaceRoot,
         timeout,
         maxBuffer: 10 * 1024 * 1024,  // 10 MB stdout+stderr
         windowsHide: true,
-        shell: process.platform === 'win32' ? 'powershell.exe' : '/bin/bash',
+        shell: isWin ? 'powershell.exe' : '/bin/bash',
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
       }, (error, stdout, stderr) => {
         const elapsed = Date.now() - startMs;
         if (child.killed) {
@@ -108,6 +134,16 @@ export class BashTool implements ITool {
     }
     if (!stdout && !stderr) {
       parts.push('*(no output)*');
+    }
+
+    // Windows PowerShell 下常见 Unix 命令失败 —— 明确提示改用文件工具，避免模型无限重试
+    if (looksLikeUnixCommandOnPowerShell(command, stderr)) {
+      parts.push(
+        '> **Hint**: This environment uses **Windows PowerShell**. ' +
+        'Unix commands (`ls -la`, `find`, `head`, `pwd`) often fail here. ' +
+        'Prefer `list_dir` / `read_file` / `search_code` to explore files. ' +
+        'Do not retry the same failing command.',
+      );
     }
 
     return parts.join('\n\n');

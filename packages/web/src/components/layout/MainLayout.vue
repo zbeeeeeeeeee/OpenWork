@@ -57,6 +57,9 @@
               @cancel-create="handleCancelCreate"
             />
           </template>
+          <template v-slot:git>
+            <GitPanel :root="store.workspaceRoot || undefined" @committed="handleGitCommitted" />
+          </template>
         </SideBar>
       </div>
       <div v-if="!store.isSingleFile && !sidebarCollapsed" class="resize-handle" @mousedown="startSidebarResize"></div>
@@ -68,6 +71,7 @@
           closable
           tab-style="min-width: 80px; user-select: none;"
           class="editor-tabs"
+          :pane-style="{ padding: 0, height: '0', overflow: 'hidden' }"
           @close="handleTabClose"
         >
           <n-tab-pane
@@ -85,13 +89,11 @@
         <div class="editor-container">
           <ImageViewer
             v-if="store.activeTab && store.activeTab.viewMode === 'image'"
-            :key="store.activeTab.id"
             :src="store.activeTab.content"
             :filename="store.activeTab.name"
           />
           <MonacoEditor
             v-else-if="store.activeTab && store.activeTab.viewMode === 'code'"
-            :key="store.activeTab.id"
             :content="store.activeTab.content"
             :language="store.activeTab.language"
             @content-change="(c: string) => store.updateContent(store.activeTab!.id, c)"
@@ -118,14 +120,12 @@
           />
           <HtmlViewer
             v-else-if="store.activeTab && store.activeTab.viewMode === 'html'"
-            :key="store.activeTab.id"
             :content="store.activeTab.content"
             :language="store.activeTab.language"
             @content-change="(c: string) => store.updateContent(store.activeTab!.id, c)"
           />
           <MarkdownViewer
             v-else-if="store.activeTab && store.activeTab.viewMode === 'markdown'"
-            :key="store.activeTab.id"
             :content="store.activeTab.content"
             :language="store.activeTab.language"
             @content-change="(c: string) => store.updateContent(store.activeTab!.id, c)"
@@ -271,6 +271,7 @@ import Toolbar from '../toolbar/Toolbar.vue';
 import { webFileLog } from '../../services/logger';
 import SideBar from './SideBar.vue';
 import type { SideBarSection } from './SideBar.vue';
+import GitPanel from '../git/GitPanel.vue';
 import { NewFileTree } from '../new-file-tree';
 import type { ContextMenuPayload } from '../new-file-tree';
 import MonacoEditor from '../editor/MonacoEditor.vue';
@@ -385,6 +386,7 @@ const { startResize, isResizing: isWindowResizing } = useWindowResize();
 // ===== 侧边栏配置 =====
 const sidebarSections = ref<SideBarSection[]>([
   { id: 'explorer', label: t('sidebar.explorer'), count: 0 },
+  { id: 'git', label: t('sidebar.git') },
 ]);
 
 const rightToolbarItems = computed<RightToolbarItem[]>(() => [
@@ -399,6 +401,10 @@ function onRightToolbarSelect(id: string) {
     activeRightPanel.value = id;
     if (!rightPanelWidth.value) initRightPanelWidth();
   }
+}
+
+function handleGitCommitted() {
+  // Git 提交成功后可刷新文件树等
 }
 
 /** 右侧面板最大宽度：主区域宽 - 侧边栏(如果展开) - 调整手柄(4) - 最小编辑器宽 - 右侧工具栏(48) */
@@ -788,6 +794,7 @@ fs.setNewFileHandler(handleNewFile);
 watch(() => store.fileTreeNodes.length, (count) => {
   sidebarSections.value = [
     { id: 'explorer', label: t('sidebar.explorer'), count },
+    { id: 'git', label: t('sidebar.git') },
   ];
 });
 
@@ -927,7 +934,7 @@ async function handleOpenFolder() {
     if (!path) return;
     const choice = await showWorkspaceConfirmDialog(path, false);
     if (choice === 'new') await openFolderInNewContext(path);
-    else if (choice === 'current') await fs.openFolderDialog();
+    else if (choice === 'current') await fs.openWorkspaceViaPath(path);
   } else {
     await fs.openFolderDialog();
   }
@@ -941,7 +948,7 @@ async function handleOpenFile() {
     if (!path) return;
     const choice = await showWorkspaceConfirmDialog(path, true);
     if (choice === 'new') await openFileInNewContext(path);
-    else if (choice === 'current') await fs.openFileDialog();
+    else if (choice === 'current') await fs.openFileAsLightweightWorkspace(path);
   } else {
     await fs.openFileDialog();
   }
@@ -1011,6 +1018,7 @@ async function handleDrop(e: DragEvent) {
 
   sidebarSections.value = [
     { id: 'explorer', label: t('sidebar.explorer'), count: store.fileTreeNodes.length },
+    { id: 'git', label: t('sidebar.git') },
   ];
   if (sidebarCollapsed.value) toggleSidebar();
 }
@@ -1169,7 +1177,7 @@ function startRightPanelResize(e: MouseEvent) {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--bg-primary);
+  background: var(--app-bg);
 }
 .main-layout.drag-over {
   position: relative;
@@ -1180,7 +1188,8 @@ function startRightPanelResize(e: MouseEvent) {
   overflow: hidden;
 }
 .sidebar {
-  background: var(--bg-secondary);
+  background: var(--surface-1);
+  border-right: 1px solid var(--border-subtle);
   overflow-y: auto;
   flex-shrink: 0;
 }
@@ -1190,41 +1199,86 @@ function startRightPanelResize(e: MouseEvent) {
   flex-shrink: 0;
 }
 .resize-handle:hover {
-  background: var(--accent-color);
+  background: var(--accent);
+  opacity: 0.4;
 }
 .editor-area {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  background: var(--surface-2);
 }
 .editor-tabs {
-  flex-shrink: 0;
+  flex: 0 0 auto;
+  height: auto;
+  max-height: 48px;
+  overflow: hidden;
   user-select: none;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-subtle);
 }
-.editor-tabs :deep(.n-tabs-pane-wrapper) {
+.editor-tabs :deep(.n-tabs-pane-wrapper),
+.editor-tabs :deep(.n-tabs-content) {
   display: none;
+  height: 0;
+  overflow: hidden;
 }
 .editor-tabs :deep(.n-tabs-nav) {
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-color);
+  background: var(--surface-1);
+  border-bottom: none;
+  padding: 0 var(--space-2);
 }
 .editor-tabs :deep(.n-tabs-tab) {
   background: transparent;
-  border-right: 1px solid var(--border-color);
+  border: none;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  margin: var(--space-1) var(--space-1) 0 0;
+  padding: 0 var(--space-3);
+  height: 28px;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 .editor-tabs :deep(.n-tabs-tab--active) {
-  background: var(--bg-primary);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
 }
 .editor-tabs :deep(.n-tabs-tab:hover) {
-  background: var(--bg-hover);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.editor-tabs :deep(.n-tabs-tab__close) {
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+.editor-tabs :deep(.n-tabs-tab:hover .n-tabs-tab__close),
+.editor-tabs :deep(.n-tabs-tab--active .n-tabs-tab__close) {
+  opacity: 1;
+}
+.editor-tabs :deep(.n-tabs-tab__close:hover) {
+  color: var(--text-primary);
+  background: var(--surface-selected);
+  border-radius: var(--radius-sm);
 }
 .tab-dirty-indicator {
-  color: var(--accent-color);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-left: var(--space-1);
+  display: inline-block;
+  font-size: 0;
+  line-height: 0;
+  vertical-align: middle;
 }
 .editor-container {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 200px;
+  height: 0;
   overflow: hidden;
+  position: relative;
 }
 .editor-placeholder {
   display: flex;
@@ -1260,19 +1314,20 @@ function startRightPanelResize(e: MouseEvent) {
   align-items: center;
   justify-content: center;
   pointer-events: none;
-  background: rgba(0, 0, 0, 0.28);
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(2px);
 }
 .drop-message {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 280px;
-  padding: 22px 30px;
-  border: 1px dashed var(--accent-color);
-  border-radius: 8px;
-  background: rgba(30, 30, 30, 0.94);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.38);
+  padding: var(--space-5) 30px;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--surface-3);
+  box-shadow: var(--shadow-md);
 }
 .drop-title {
   color: var(--text-primary);
@@ -1286,15 +1341,17 @@ function startRightPanelResize(e: MouseEvent) {
 .right-resize-handle {
   width: 4px;
   cursor: col-resize;
-  background: var(--border-color);
+  background: var(--border-subtle);
   flex-shrink: 0;
 }
 .right-resize-handle:hover {
-  background: var(--accent-color);
+  background: var(--accent);
+  opacity: 0.4;
 }
 .right-sidebar {
   flex-shrink: 0;
-  border-left: 1px solid var(--border-color);
+  border-left: 1px solid var(--border-subtle);
+  background: var(--surface-1);
   position: relative;
 }
 .agent-ui-toggle {
@@ -1305,30 +1362,30 @@ function startRightPanelResize(e: MouseEvent) {
 }
 .undo-notification {
   position: fixed;
-  bottom: 16px;
+  bottom: var(--space-4);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--accent-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
   z-index: 1001;
-  font-size: 13px;
+  font-size: var(--font-base);
 }
 .undo-text {
   color: var(--text-primary);
 }
 .undo-btn {
-  padding: 4px 12px;
-  font-size: 12px;
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-sm);
   cursor: pointer;
   border: none;
-  border-radius: 4px;
-  background: var(--accent-color);
+  border-radius: var(--radius-sm);
+  background: var(--accent);
   color: #fff;
 }
 .undo-btn:hover {
@@ -1339,7 +1396,7 @@ function startRightPanelResize(e: MouseEvent) {
   border: none;
   color: var(--text-secondary);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--font-md);
   padding: 0 2px;
 }
 .undo-dismiss:hover {

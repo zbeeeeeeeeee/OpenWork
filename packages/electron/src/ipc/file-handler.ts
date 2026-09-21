@@ -1,5 +1,6 @@
 import { IpcMain, Dialog, BrowserWindow } from 'electron';
 import * as fs from 'fs/promises';
+import * as os from 'os';
 import * as path from 'path';
 import { createLogger, LOG_CATEGORY } from '@openwork/agent';
 
@@ -17,6 +18,102 @@ export function getOpenWorkspacePaths(): string[] {
 
 export function clearWindowRoot(webContentsId: number) {
   windowRoots.delete(webContentsId);
+}
+
+const MAX_DIRECTORY_ENTRIES = 1000;
+
+interface DirectoryBrowserEntry {
+  name: string;
+  path: string;
+  isDirectory: true;
+  hidden?: boolean;
+}
+
+interface DirectoryBrowseResult {
+  path: string;
+  parent: string | null;
+  breadcrumbs: DirectoryBrowserEntry[];
+  entries: DirectoryBrowserEntry[];
+  truncated: boolean;
+}
+
+function isFullyQualifiedAbsolutePath(input: string): boolean {
+  const candidate = String(input ?? '').trim();
+  if (!candidate) return false;
+  if (process.platform === 'win32') {
+    const normalized = path.win32.normalize(candidate);
+    if (!path.win32.isAbsolute(normalized)) return false;
+    const root = path.win32.parse(normalized).root;
+    if (/^[A-Za-z]:[\\/]/.test(root)) return true;
+    if (root.startsWith('\\\\')) {
+      const parts = root.split(/[\\/]+/).filter(Boolean);
+      return parts.length >= 2;
+    }
+    return false;
+  }
+  return path.posix.isAbsolute(candidate);
+}
+
+function buildBreadcrumbs(absPath: string): DirectoryBrowserEntry[] {
+  const parsed = path.parse(absPath);
+  const root = parsed.root;
+  if (!root) {
+    return [{ name: absPath, path: absPath, isDirectory: true }];
+  }
+  const segments: string[] = [];
+  let current = absPath;
+  while (current !== root) {
+    const currentParsed = path.parse(current);
+    segments.unshift(currentParsed.base);
+    current = currentParsed.dir;
+  }
+  const breadcrumbs: DirectoryBrowserEntry[] = [{ name: root, path: root, isDirectory: true }];
+  let acc = root;
+  for (const segment of segments) {
+    acc = path.join(acc, segment);
+    breadcrumbs.push({ name: segment, path: acc, isDirectory: true });
+  }
+  return breadcrumbs;
+}
+
+function validateSingleSegmentName(name: string): void {
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) throw new Error('Folder name cannot be empty');
+  if (trimmed === '.' || trimmed === '..') throw new Error('Invalid folder name');
+  if (trimmed.includes('/') || trimmed.includes('\\')) throw new Error('Invalid folder name');
+}
+
+async function listDirectoriesForPicker(rawPath?: string): Promise<DirectoryBrowseResult> {
+  const input = rawPath === undefined || rawPath === null || String(rawPath).trim() === ''
+    ? os.homedir()
+    : String(rawPath);
+  if (!isFullyQualifiedAbsolutePath(input)) {
+    throw new Error(`Invalid absolute path: ${input}`);
+  }
+  const absPath = path.resolve(input);
+  const stat = await fs.stat(absPath);
+  if (!stat.isDirectory()) {
+    throw new Error(`Not a directory: ${absPath}`);
+  }
+  const dirents = await fs.readdir(absPath, { withFileTypes: true });
+  const directories = dirents
+    .filter((dirent) => dirent.isDirectory())
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const truncated = directories.length > MAX_DIRECTORY_ENTRIES;
+  const visibleDirectories = directories.slice(0, MAX_DIRECTORY_ENTRIES);
+  const entries: DirectoryBrowserEntry[] = visibleDirectories.map((dirent) => ({
+    name: dirent.name,
+    path: path.join(absPath, dirent.name),
+    isDirectory: true,
+    hidden: dirent.name.startsWith('.'),
+  }));
+  return {
+    path: absPath,
+    parent: path.dirname(absPath) === absPath ? null : path.dirname(absPath),
+    breadcrumbs: buildBreadcrumbs(absPath),
+    entries,
+    truncated,
+  };
 }
 
 export function registerFileHandlers(ipcMain: IpcMain, dialog: Dialog) {
@@ -141,6 +238,20 @@ export function registerFileHandlers(ipcMain: IpcMain, dialog: Dialog) {
 
   ipcMain.handle('file:openFolderPath', async (event, folderPath: string) => {
     return openFolderAtPath(event, folderPath);
+  });
+
+  ipcMain.handle('picker:listDirectories', async (_event, rawPath?: string) => {
+    return listDirectoriesForPicker(rawPath);
+  });
+
+  ipcMain.handle('picker:createDirectory', async (_event, parent: string, name: string) => {
+    if (!isFullyQualifiedAbsolutePath(String(parent ?? ''))) {
+      throw new Error(`Invalid parent path: ${parent}`);
+    }
+    validateSingleSegmentName(name);
+    const target = path.join(parent, String(name).trim());
+    await fs.mkdir(target, { recursive: false });
+    return { name: String(name).trim(), path: target, isDirectory: true, hidden: String(name).trim().startsWith('.') };
   });
 
   ipcMain.handle('dialog:openFile', async (event) => {

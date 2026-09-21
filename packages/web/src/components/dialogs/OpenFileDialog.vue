@@ -2,85 +2,109 @@
   <n-modal
     v-model:show="showModal"
     preset="card"
-    :title="$t('openDialog.selectFile')"
-    style="width: 560px; max-height: 80vh"
+    class="folder-picker-modal"
+    style="width: 720px; height: 540px; max-width: calc(100vw - 48px); min-width: 560px; max-height: 80vh; min-height: 0;"
     @after-leave="$emit('cancel')"
   >
-    <div class="dialog-toolbar">
-      <n-button size="small" :disabled="!selectedDir" @click="startNewFolder">
-        <template #icon><n-icon :component="CreateOutline" /></template>
-        {{ $t('openDialog.newFolder') }}
-      </n-button>
-      <n-button size="small" :disabled="!selectedDir" @click="goToParent">
-        <template #icon><n-icon :component="ArrowUpOutline" /></template>
-        {{ $t('openDialog.goParent') }}
-      </n-button>
-    </div>
+    <template #header>
+      <div class="picker-header">
+        <div class="picker-title">{{ $t('openDialog.selectFile') }}</div>
+        <div class="picker-subtitle">{{ $t('openDialog.selectFileSubtitle') }}</div>
+      </div>
+    </template>
 
-    <div class="dialog-dir-list" ref="listRef">
-      <n-spin v-if="loadingRoots" size="small" class="dialog-empty" />
-      <template v-for="node in flatTree" :key="node.path">
-        <div
-          class="dialog-entry"
-          :class="{ 'file-selected': selectedPath === node.path && !node.isDirectory, 'dir-selected': selectedDir === node.path && node.isDirectory }"
-          :style="{ paddingLeft: node.depth * 16 + 10 + 'px' }"
-          @click="handleClick(node)"
-        >
-          <span class="entry-arrow" :class="{ expanded: node.expanded }" v-if="node.isDirectory">
-            {{ node.expanded ? '▾' : '▸' }}
-          </span>
-          <span class="entry-arrow" v-else></span>
-          <n-icon size="16" :component="node.isDirectory ? (node.expanded ? FolderOpenOutline : FolderOutline) : DocumentOutline" />
-          <span class="entry-name">{{ node.name }}</span>
+    <div class="file-picker">
+      <div v-if="selectedPath" class="selected-file">
+        <span>{{ $t('openDialog.selectedFile') }}</span>
+        <strong>{{ selectedName }}</strong>
+      </div>
+
+      <div class="browser-surface">
+        <div class="column">
+          <div class="column-header">
+            <span class="column-title">{{ selectedDirName }}</span>
+            <span class="column-subtitle">{{ $t('openDialog.currentDirectoryLabel') }}</span>
+          </div>
+          <div ref="listRef" class="column-list">
+            <n-spin v-if="loadingRoots" size="small" class="column-state" />
+            <template v-else>
+              <button
+                v-for="node in flatTree"
+                :key="node.path"
+                class="file-row"
+                :class="{
+                  selected: selectedPath === node.path && !node.isDirectory,
+                  'dir-selected': selectedDir === node.path && node.isDirectory,
+                }"
+                :style="{ paddingLeft: node.depth * 16 + 12 + 'px' }"
+                @click="handleClick(node)"
+              >
+                <span v-if="node.isDirectory" class="entry-arrow" :class="{ expanded: node.expanded }">
+                  {{ node.expanded ? '▾' : '▸' }}
+                </span>
+                <span v-else class="entry-arrow"></span>
+                <n-icon size="16" :component="node.isDirectory ? (node.expanded ? FolderOpenOutline : FolderOutline) : DocumentOutline" />
+                <span class="entry-name">{{ node.name }}</span>
+              </button>
+              <div v-if="!loadingRoots && flatTree.length === 0" class="column-state">
+                {{ $t('openDialog.empty') }}
+              </div>
+            </template>
+          </div>
         </div>
+      </div>
+
+      <div class="picker-footer">
+        <div class="footer-actions">
+          <button class="footer-btn" :disabled="!selectedDir" @click="startNewFolder">
+            <n-icon size="14" :component="CreateOutline" />
+            <span>{{ $t('openDialog.newFolder') }}</span>
+          </button>
+          <button class="footer-btn" :disabled="!selectedDir" @click="goToParent">
+            <n-icon size="14" :component="ArrowUpOutline" />
+            <span>{{ $t('openDialog.goParent') }}</span>
+          </button>
+        </div>
+        <div class="footer-decisions">
+          <button class="btn-cancel" @click="$emit('cancel')">{{ $t('openDialog.cancel') }}</button>
+          <button class="btn-open" :disabled="!selectedPath" @click="confirm">{{ $t('openDialog.open') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <n-modal
+      v-model:show="showNewFolderDialog"
+      preset="card"
+      :title="$t('openDialog.newFolderTitle')"
+      style="width: 400px"
+    >
+      <n-text depth="3">{{ $t('openDialog.selected') }}: {{ creatingParent }}</n-text>
+      <n-input
+        ref="nfInput"
+        v-model:value="newFolderName"
+        :placeholder="$t('openDialog.folderName')"
+        :status="newFolderError ? 'error' : undefined"
+        @keyup.enter="confirmNewFolder"
+        @keyup.escape="cancelNewFolder"
+        @input="newFolderError = ''"
+      />
+      <div v-if="newFolderError" class="nf-error">{{ newFolderError }}</div>
+      <template #footer>
+        <n-button @click="cancelNewFolder">{{ $t('openDialog.cancel') }}</n-button>
+        <n-button type="primary" :disabled="!newFolderName.trim()" @click="confirmNewFolder">
+          {{ $t('openDialog.create') }}
+        </n-button>
       </template>
-      <n-empty v-if="!loadingRoots && flatTree.length === 0" :description="$t('openDialog.empty')" size="small" class="dialog-empty" />
-    </div>
-
-    <div class="dialog-selected" v-if="selectedPath">
-      {{ $t('openDialog.selectedFile') }}: <strong>{{ selectedName }}</strong>
-    </div>
-
-    <template #footer>
-      <n-button @click="$emit('cancel')">{{ $t('openDialog.cancel') }}</n-button>
-      <n-button type="primary" :disabled="!selectedPath" @click="confirm">
-        {{ $t('openDialog.open') }}
-      </n-button>
-    </template>
-  </n-modal>
-
-  <!-- 新建文件夹 -->
-  <n-modal
-    v-model:show="showNewFolderDialog"
-    preset="card"
-    :title="$t('openDialog.newFolderTitle')"
-    style="width: 400px"
-  >
-    <n-text depth="3">{{ $t('openDialog.selected') }}: {{ creatingParent }}</n-text>
-    <n-input
-      ref="nfInput"
-      v-model:value="newFolderName"
-      :placeholder="$t('openDialog.folderName')"
-      :status="newFolderError ? 'error' : undefined"
-      @keyup.enter="confirmNewFolder"
-      @keyup.escape="cancelNewFolder"
-      @input="newFolderError = ''"
-    />
-    <div v-if="newFolderError" class="nf-error">{{ newFolderError }}</div>
-    <template #footer>
-      <n-button @click="cancelNewFolder">{{ $t('openDialog.cancel') }}</n-button>
-      <n-button type="primary" :disabled="!newFolderName.trim()" @click="confirmNewFolder">
-        {{ $t('openDialog.create') }}
-      </n-button>
-    </template>
+    </n-modal>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { NModal, NButton, NInput, NIcon, NSpin, NText, NEmpty } from 'naive-ui'
+import { NModal, NButton, NInput, NIcon, NSpin, NText } from 'naive-ui'
 import { CreateOutline, ArrowUpOutline, FolderOutline, FolderOpenOutline, DocumentOutline } from '@vicons/ionicons5'
+import { createFileServiceClient } from '../../services/fileService'
 
 const { t } = useI18n()
 
@@ -88,6 +112,8 @@ const emit = defineEmits<{
   confirm: [filePath: string]
   cancel: []
 }>()
+
+const client = createFileServiceClient();
 
 interface TreeNode {
   name: string; path: string; isDirectory: boolean
@@ -109,6 +135,12 @@ const creatingParent = ref('')
 const nfInput = ref<{ focus: () => void }>()
 
 const selectedName = computed(() => selectedPath.value.split('/').pop() || selectedPath.value.split('\\').pop() || '')
+
+const selectedDirName = computed(() => {
+  if (!selectedDir.value) return t('openDialog.thisComputer')
+  const parts = selectedDir.value.replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts[parts.length - 1] || selectedDir.value
+})
 
 const flatTree = computed(() => {
   const result: TreeNode[] = []
@@ -138,11 +170,9 @@ async function handleClick(node: TreeNode) {
     if (!node.loaded) {
       node.loading = true
       try {
-        const resp = await fetch(`/api/workspace/browse?path=${encodeURIComponent(node.path)}`)
-        if (!resp.ok) throw new Error('Browse failed')
-        const data = await resp.json()
-        const entries: any[] = data.entries
-        entries.sort((a: any, b: any) => {
+        const data = await client.browseFilesystem(node.path)
+        const entries = data.entries
+        entries.sort((a, b) => {
           if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
           return a.name.localeCompare(b.name)
         })
@@ -184,17 +214,9 @@ async function confirmNewFolder() {
   if (!name) { newFolderError.value = t('openDialog.emptyFolderName'); return }
   if (INVALID_CHARS.test(name)) { newFolderError.value = t('openDialog.invalidFolderName'); return }
 
-  const fullPath = creatingParent.value.replace(/\/$/, '') + '/' + name
   try {
-    const resp = await fetch('/api/files/mkdir', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: name, root: creatingParent.value }),
-    })
-    if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}))
-      throw new Error((data as any).error || `HTTP ${resp.status}`)
-    }
+    if (!client.createDirectory) throw new Error(t('openDialog.newFolderError'));
+    await client.createDirectory(creatingParent.value, name)
     const parentNode = nodes.value.find(n => n.path === creatingParent.value)
     if (parentNode) { removeChildren(parentNode.path); parentNode.loaded = false; parentNode.expanded = false; await handleClick(parentNode) }
     showNewFolderDialog.value = false
@@ -212,7 +234,7 @@ function cancelNewFolder() {
 }
 
 function scrollToSelected() {
-  const el = listRef.value?.querySelector('.dialog-entry.dir-selected') as HTMLElement | null
+  const el = listRef.value?.querySelector('.file-row.dir-selected') as HTMLElement | null
   el?.scrollIntoView({ block: 'center', behavior: 'smooth' })
 }
 
@@ -229,9 +251,7 @@ function removeChildren(parentPath: string) {
 async function loadRoots() {
   loadingRoots.value = true
   try {
-    const resp = await fetch('/api/workspace/roots')
-    if (!resp.ok) throw new Error('Failed')
-    const data = await resp.json()
+    const data = await client.getWorkspaceRoots()
     const roots: TreeNode[] = []
     for (const root of data) {
       roots.push({ name: root.path === '/' ? '/' : root.path, path: root.path, isDirectory: true, depth: 0, expanded: false, loaded: false, loading: false, parent: null })
@@ -250,43 +270,244 @@ onMounted(() => { loadRoots() })
 </script>
 
 <style scoped>
-.dialog-toolbar {
+.file-picker {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
+  flex-direction: column;
+  gap: var(--space-3);
 }
-.dialog-dir-list {
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  min-height: 280px;
-  max-height: 420px;
-  overflow-y: auto;
+
+.picker-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-.dialog-entry {
+
+.picker-title {
+  font-size: 17px;
+  font-weight: var(--weight-semibold);
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.picker-subtitle {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.selected-file {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 10px;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--text-primary);
-  white-space: nowrap;
-}
-.dialog-entry:hover { background: var(--bg-hover); }
-.dialog-entry.file-selected { background: rgba(0, 122, 204, 0.15); }
-.dialog-entry.dir-selected { background: rgba(79, 193, 255, 0.08); }
-.entry-arrow { width: 14px; font-size: 11px; color: var(--text-secondary); flex-shrink: 0; text-align: center; }
-.entry-name { pointer-events: none; }
-.dialog-empty { padding: 20px; text-align: center; }
-.dialog-selected {
-  margin-top: 10px;
-  padding: 6px 10px;
-  background: var(--bg-secondary);
-  border-radius: 4px;
-  font-size: 12px;
+  gap: var(--space-1);
+  font-size: var(--font-sm);
   color: var(--text-secondary);
-  word-break: break-all;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
 }
-.dialog-selected strong { color: var(--accent-color); }
-.nf-error { color: #f44747; font-size: 12px; margin-top: 6px; }
+
+.selected-file strong {
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+}
+
+.browser-surface {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.column {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.column-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.column-title {
+  font-size: var(--font-sm);
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.column-subtitle {
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.column-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-1);
+}
+
+.file-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-base);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.file-row:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.file-row.selected {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+  font-weight: var(--weight-medium);
+  box-shadow: inset 2px 0 0 var(--text-primary);
+}
+
+.file-row.dir-selected {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+}
+
+.entry-arrow {
+  width: 14px;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.entry-name {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.column-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 120px;
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+
+.picker-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.footer-decisions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.footer-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.footer-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.footer-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.btn-cancel,
+.btn-open {
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: none;
+  font-size: var(--font-sm);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast), opacity var(--transition-fast);
+}
+
+.btn-cancel {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.btn-cancel:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.btn-open {
+  background: var(--text-primary);
+  color: var(--app-bg);
+  font-weight: var(--weight-medium);
+}
+
+.btn-open:hover:not(:disabled) {
+  opacity: 0.86;
+}
+
+.btn-open:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.nf-error {
+  color: var(--danger);
+  font-size: var(--font-sm);
+  margin-top: var(--space-2);
+}
 </style>

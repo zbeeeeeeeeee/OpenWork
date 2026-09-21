@@ -219,11 +219,27 @@ export const useEditorStore = defineStore('editor', () => {
     }
   };
 
+  /** 按路径查找标签 */
+  const findTabByPath = (filePath: string): EditorTab | undefined => {
+    return tabs.value.find(t => pathsMatch(t.path, filePath, workspaceRoot.value));
+  };
+
+  /** 磁盘重载后替换内容并清脏标记 */
+  const replaceTabContent = (tabId: string, content: string) => {
+    const tab = tabs.value.find(t => t.id === tabId);
+    if (tab) {
+      tab.content = content;
+      tab.originalContent = content;
+      tab.isDirty = false;
+    }
+  };
+
   return {
     tabs, activeTabId, activeTab, fileTreeNodes, workspaceRoot, workspaceRoots, workspaceMode,
     activeWorkspaceId, isSingleFile,
     addWorkspaceRoot,
     openFile, newUntitled, closeTab, updateContent, saveTab, setActiveTab, setTabPath, setActiveTabByName,
+    findTabByPath, replaceTabContent,
     enterSingleFileMode, exitSingleFileMode,
   };
 });

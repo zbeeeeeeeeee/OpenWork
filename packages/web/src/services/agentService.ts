@@ -19,6 +19,29 @@ export interface AgentConfig {
   temperature?: number;
   maxTokens?: number;
   memoryTokenBudget?: number;
+  /** 权限模式；桌面默认 auto-edit（写文件自动，bash 需确认） */
+  permissionMode?: 'suggest' | 'auto-edit' | 'full-auto';
+  toolProtocol?: 'xml' | 'fc' | 'auto';
+}
+
+/** SSE 推送的截断预览 */
+export interface ApprovalPreview {
+  path?: string;
+  commandPreview?: string;
+  contentPreview?: string;
+  oldPreview?: string;
+  newPreview?: string;
+  contentLength?: number;
+}
+
+/** 服务端推来的待确认请求 */
+export interface ApprovalRequiredEvent {
+  approvalId: string;
+  toolName: string;
+  label: string;
+  mode: string;
+  preview?: ApprovalPreview;
+  sessionId?: string;
 }
 
 /** 对话消息 */
@@ -32,7 +55,7 @@ export interface AgentMessage {
 
 /** SSE 流式事件类型 */
 export interface StreamEvent {
-  type: 'tool_start' | 'tool_end' | 'tool_result' | 'thinking_start' | 'thinking_end';
+  type: 'tool_start' | 'tool_end' | 'tool_result' | 'thinking_start' | 'thinking_end' | 'file_changed';
   /** tool_result 的内容文本 */
   content?: string;
   /** 工具类型(tool_start/tool_end) */
@@ -43,6 +66,8 @@ export interface StreamEvent {
   toolParams?: Record<string, string>;
   /** 工具执行耗时毫秒(tool_end) */
   durationMs?: number;
+  /** Agent 写盘路径（相对 workspaceRoot） */
+  paths?: string[];
 }
 
 /** 流式请求 body —— 与 server 端 StreamRequestBody 对齐 */
@@ -56,7 +81,21 @@ export interface StreamRequestBody {
 }
 
 export function createAgentService(baseUrl = DEFAULT_BASE_URL) {
+  async function sendApproval(approvalId: string, decision: 'allow' | 'deny'): Promise<{ success: boolean }> {
+    const res = await fetch(`${baseUrl}/api/agent/approval`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ approvalId, decision }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    return { success: data.success === true };
+  }
+
   return {
+    sendApproval,
+    get baseUrl() { return baseUrl; },
+
     async sendMessage(
       message: string,
       body: Partial<StreamRequestBody>,
@@ -85,7 +124,11 @@ export function createAgentService(baseUrl = DEFAULT_BASE_URL) {
       config: AgentConfig,
       onChunk: (type: 'thinking' | 'content', text: string) => void,
       onEvent?: (event: StreamEvent) => void,
-      options?: { signal?: AbortSignal },
+      options?: {
+        signal?: AbortSignal;
+        /** 收到服务端 approval_required 时回调（负责弹窗+POST，返回最终决策） */
+        onApprovalRequired?: (req: ApprovalRequiredEvent) => Promise<'allow' | 'deny'>;
+      },
     ): Promise<AgentMessage> {
       const fullBody: StreamRequestBody = {
         message,
@@ -135,6 +178,21 @@ export function createAgentService(baseUrl = DEFAULT_BASE_URL) {
             if (data.done) {
               streamDone = true;
               break;
+            }
+
+            if (data.approval_required && options?.onApprovalRequired) {
+              const req = data.approval_required as ApprovalRequiredEvent;
+              // 回调负责展示弹窗 + POST 到服务端；返回最终决策
+              await options.onApprovalRequired(req);
+              continue;
+            }
+
+            if (data.file_changed && onEvent) {
+              const fc = data.file_changed as { paths?: string[] };
+              onEvent({
+                type: 'file_changed',
+                paths: fc.paths || [],
+              });
             }
 
             if (data.tool_start && onEvent) {

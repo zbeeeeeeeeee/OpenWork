@@ -3,6 +3,7 @@
     trigger="manual"
     placement="bottom-start"
     :show="show"
+    :theme-overrides="dropdownThemeOverrides"
     :options="computedOptions"
     @select="handleSelect"
     @clickoutside="emit('close')"
@@ -15,7 +16,7 @@
 import { computed, ref, watch, h } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { NDropdown, NIcon } from 'naive-ui'
-import type { DropdownOption, DropdownGroupOption, DropdownDividerOption } from 'naive-ui'
+import type { DropdownOption, DropdownGroupOption, DropdownDividerOption, DropdownThemeOverrides } from 'naive-ui'
 import {
   OpenOutline,
   DocumentOutline,
@@ -44,6 +45,21 @@ const emit = defineEmits<{
 }>()
 
 const anchorRef = ref<HTMLDivElement | null>(null)
+
+const dropdownThemeOverrides: DropdownThemeOverrides = {
+  color: 'var(--surface-3)',
+  borderRadius: 'var(--radius-lg)',
+  optionColorHover: 'var(--surface-hover)',
+  optionColorActive: 'var(--surface-selected)',
+  optionTextColor: 'var(--text-secondary)',
+  optionTextColorHover: 'var(--text-primary)',
+  optionTextColorActive: 'var(--accent)',
+  optionTextColorChildActive: 'var(--accent)',
+  dividerColor: 'var(--border-subtle)',
+  groupHeaderTextColor: 'var(--text-muted)',
+  prefixColor: 'var(--text-muted)',
+  suffixColor: 'var(--text-muted)',
+}
 
 watch(() => [props.show, props.x, props.y] as const, ([s, x, y]) => {
   if (s && anchorRef.value) {

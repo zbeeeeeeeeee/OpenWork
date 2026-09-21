@@ -1,9 +1,10 @@
-import { mkdirSync, writeFileSync, existsSync } from 'fs';
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import * as path from 'path';
 import type { ITool, ToolInputSchema, ToolExecutionContext, ToolAnnotations } from '../../types/tool';
 import { createLogger } from '../../logger';
 import { LOG_CATEGORY } from '../../log-categories';
 import { resolveKey } from '../_shared/path';
+import { buildWriteHunk } from '../_shared/file-change';
 import {
   FILE_WRITE_TOOL_NAME,
   FILE_WRITE_TOOL_DESCRIPTION,
@@ -72,6 +73,13 @@ export class FileWriteTool implements ITool {
         mkdirSync(parent, { recursive: true });
       }
 
+      if (existed) {
+        const prev = readFileSync(absPath, 'utf-8');
+        context.onFileBackup?.(target, prev, true);
+      } else {
+        context.onFileBackup?.(target, null, false);
+      }
+
       writeFileSync(absPath, content, 'utf-8');
 
       // 写完后登记到 readFileState:LLM 自己刚写的内容当然"知道",
@@ -81,6 +89,14 @@ export class FileWriteTool implements ITool {
       const newBytes = Buffer.byteLength(content, 'utf-8');
       const newLines = content === '' ? 0 : content.split('\n').length;
       const kind = existed ? 'overwritten' : 'created';
+
+      context.onFileChange?.({
+        kind: existed ? 'write' : 'create',
+        path: target,
+        newSize: newBytes,
+        hunks: [buildWriteHunk(content)],
+        summary: `${kind} ${target}`,
+      });
 
       log.info(`file_write ${kind}: ${newBytes} bytes, ${newLines} lines, ${Date.now() - startMs}ms`, {
         path: target,

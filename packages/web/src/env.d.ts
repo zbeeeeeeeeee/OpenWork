@@ -26,6 +26,8 @@ interface Window {
     deleteDir: (path: string, recursive?: boolean) => Promise<void>;
     rename: (oldPath: string, newPath: string) => Promise<void>;
     openFolderPath: (path: string) => Promise<string | null>;
+    listDirectories: (path?: string) => Promise<{ path: string; parent: string | null; breadcrumbs: { name: string; path: string; isDirectory: true; hidden?: boolean }[]; entries: { name: string; path: string; isDirectory: true; hidden?: boolean }[]; truncated: boolean }>;
+    createDirectory: (parent: string, name: string) => Promise<{ name: string; path: string; isDirectory: true; hidden?: boolean }>;
     openFolder: () => Promise<string | null>;
     openFile: () => Promise<{ path: string } | null>;
     saveFile: (path: string, content: string) => Promise<string | null>;

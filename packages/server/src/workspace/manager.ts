@@ -4,6 +4,7 @@ import {
   createLogger,
   LOG_CATEGORY,
   type SerializedSessionMemory,
+  type Approver,
 } from '@openwork/agent';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -83,9 +84,11 @@ interface ActiveWorkspace {
 export class WorkspaceManager {
   private workspaces = new Map<string, ActiveWorkspace>();
   private configDir: string;
+  private approver?: Approver;
 
-  constructor(configDir: string) {
+  constructor(configDir: string, approver?: Approver) {
     this.configDir = configDir;
+    this.approver = approver;
   }
 
   async openWorkspace(rootPath: string, llmGateway: LLMGateway, lightweight = false): Promise<WorkspaceData> {
@@ -117,6 +120,14 @@ export class WorkspaceManager {
       mcpServers: undefined,
       memoryTokenBudget,
       enableBash: resolveEnableBash(),
+      // 权限：环境变量强制；否则 full-auto（兼容 headless）。前端建议传 auto-edit 并走 broker。
+      permissionMode:
+        process.env.OPENWORK_PERMISSION_MODE === 'suggest' ||
+        process.env.OPENWORK_PERMISSION_MODE === 'auto-edit' ||
+        process.env.OPENWORK_PERMISSION_MODE === 'full-auto'
+          ? (process.env.OPENWORK_PERMISSION_MODE as 'suggest' | 'auto-edit' | 'full-auto')
+          : 'full-auto',
+      approver: this.approver,
     };
 
     const runtime = new AgentRuntime(config);

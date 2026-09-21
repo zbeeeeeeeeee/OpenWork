@@ -61,27 +61,38 @@ defineEmits<{
   flex-direction: column;
   justify-content: space-between;
   width: 48px;
-  background: var(--bg-tertiary);
-  border-left: 1px solid var(--border-color);
+  background: var(--surface-1);
+  border-left: 1px solid var(--border-subtle);
   flex-shrink: 0;
   user-select: none;
+  padding: var(--space-1) 0;
 }
+
 .rt-top,
 .rt-bottom {
   display: flex;
   flex-direction: column;
+  gap: var(--space-1);
 }
+
 .rt-item {
-  width: 48px;
-  height: 48px;
-  color: #858585;
-  border-radius: 0;
+  width: 40px;
+  height: 40px;
+  margin: 0 auto;
+  padding: 0;
+  color: var(--text-muted);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
+
 .rt-item:hover {
   color: var(--text-primary);
+  background: var(--surface-hover);
 }
+
 .rt-item.active {
   color: var(--text-primary);
-  border-right: 2px solid var(--text-primary);
+  background: var(--surface-selected);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 </style>

@@ -25,6 +25,8 @@ export interface SessionEvent {
   toolParams?: Record<string, string>;
   /** 工具执行耗时(tool_end 时携带) */
   durationMs?: number;
+  /** 写盘变更 */
+  fileChanges?: import('./types/tool').FileChangeMeta[];
 }
 
 export type SessionEventCallback = (event: SessionEvent) => void;
@@ -47,11 +49,25 @@ export class Session {
     this.subAgents.set(agent.definition.id, agent);
   }
 
+  /** 更换主 Agent（保留 memory；用于刷新 LLM 凭证） */
+  replaceMainAgent(agent: Agent): void {
+    this.mainAgent = agent;
+  }
+
+  /** 同步权限模式到主/子 Agent */
+  setPermissionMode(mode: import('./permission').PermissionMode): void {
+    this.mainAgent.setPermissionMode(mode);
+    for (const sub of this.subAgents.values()) {
+      sub.setPermissionMode(mode);
+    }
+  }
+
   /** 启动主 Agent 处理用户消息(非流式) */
   async start(
     message: string,
     ideSnapshot: IDESnapshot | undefined,
-    onEvent?: SessionEventCallback
+    onEvent?: SessionEventCallback,
+    signal?: AbortSignal,
   ): Promise<SessionResult> {
     const emit = (e: SessionEvent) => onEvent?.(e);
     const startMs = Date.now();
@@ -60,7 +76,28 @@ export class Session {
 
     this.memory.appendUserMessage(message);
 
-    const result = await this.runAgent(this.mainAgent, message, ideSnapshot, emit);
+    let result: AgentResult;
+    try {
+      result = await this.runAgent(this.mainAgent, message, ideSnapshot, emit, signal);
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message : String(e);
+      result = {
+        agentId: this.mainAgent.definition.id,
+        content: `Agent failed: ${msg}`,
+        turns: 0,
+        toolCalls: [],
+        error: msg,
+        stopReason: 'error',
+      };
+      log.error(`Session start failed after appendUserMessage: ${msg}`, {
+        sessionId: this.id,
+        error: msg,
+      });
+      emit({ type: 'error', data: msg });
+      await this.memoryFinalize(result, this.mainAgent.definition.id);
+      emit({ type: 'done' });
+      throw e;
+    }
     await this.memoryFinalize(result, this.mainAgent.definition.id);
 
     const subResults = await this.handleDelegation(result, ideSnapshot, emit);
@@ -95,7 +132,28 @@ export class Session {
 
     this.memory.appendUserMessage(message);
 
-    const result = await this.runAgentStream(this.mainAgent, message, ideSnapshot, emit, signal);
+    let result: AgentResult;
+    try {
+      result = await this.runAgentStream(this.mainAgent, message, ideSnapshot, emit, signal);
+    } catch (e: any) {
+      const msg = e instanceof Error ? e.message : String(e);
+      result = {
+        agentId: this.mainAgent.definition.id,
+        content: `Agent failed: ${msg}`,
+        turns: 0,
+        toolCalls: [],
+        error: msg,
+        stopReason: 'error',
+      };
+      log.error(`Session stream failed after appendUserMessage: ${msg}`, {
+        sessionId: this.id,
+        error: msg,
+      });
+      emit({ type: 'error', data: msg });
+      await this.memoryFinalize(result, this.mainAgent.definition.id);
+      emit({ type: 'done' });
+      throw e;
+    }
     await this.memoryFinalize(result, this.mainAgent.definition.id);
 
     const subResults = await this.handleDelegation(result, ideSnapshot, emit);
@@ -163,7 +221,8 @@ export class Session {
     agent: Agent,
     message: string,
     ideSnapshot: IDESnapshot | undefined,
-    emit: SessionEventCallback
+    emit: SessionEventCallback,
+    signal?: AbortSignal,
   ): Promise<AgentResult> {
     const llmMessages = this.memory.projectToLLMMessages(
       agent.getSystemPrompt(),
@@ -189,13 +248,13 @@ export class Session {
           emit({ type: 'tool_start', agentId: agent.definition.id, toolType: e.toolType, toolLabel: e.toolLabel, toolParams: e.toolParams });
           break;
         case 'tool_end':
-          emit({ type: 'tool_end', agentId: agent.definition.id, toolType: e.toolType, durationMs: e.durationMs });
+          emit({ type: 'tool_end', agentId: agent.definition.id, toolType: e.toolType, durationMs: e.durationMs, fileChanges: e.fileChanges });
           break;
         case 'tool_result':
           emit({ type: 'tool_result', agentId: agent.definition.id, toolType: e.toolType, data: e.text });
           break;
       }
-    }, toolReport);
+    }, toolReport, signal);
   }
 
   private async runAgentStream(
@@ -229,7 +288,7 @@ export class Session {
           emit({ type: 'tool_start', agentId: agent.definition.id, toolType: e.toolType, toolLabel: e.toolLabel, toolParams: e.toolParams });
           break;
         case 'tool_end':
-          emit({ type: 'tool_end', agentId: agent.definition.id, toolType: e.toolType, durationMs: e.durationMs });
+          emit({ type: 'tool_end', agentId: agent.definition.id, toolType: e.toolType, durationMs: e.durationMs, fileChanges: e.fileChanges });
           break;
         case 'tool_result':
           emit({ type: 'tool_result', agentId: agent.definition.id, toolType: e.toolType, data: e.text });

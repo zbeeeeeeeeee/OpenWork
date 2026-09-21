@@ -124,7 +124,7 @@ watch(() => props.content, () => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #323639;
+  background: var(--surface-2);
 }
 
 .docx-toolbar {
@@ -132,9 +132,9 @@ watch(() => props.content, () => {
   align-items: center;
   justify-content: space-between;
   height: 36px;
-  padding: 0 8px;
-  background: #323639;
-  border-bottom: 1px solid #404346;
+  padding: 0 var(--space-2);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
   user-select: none;
 }
@@ -142,7 +142,7 @@ watch(() => props.content, () => {
 .toolbar-group {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: var(--space-1);
 }
 
 .toolbar-btn {
@@ -151,38 +151,51 @@ watch(() => props.content, () => {
   justify-content: center;
   min-width: 28px;
   height: 28px;
-  padding: 0 4px;
+  padding: 0 var(--space-1);
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #bbb;
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.toolbar-btn:hover:not(:disabled) { background: #4e5255; color: #eee; }
-.toolbar-btn:active:not(:disabled) { background: #5a5e62; }
-.toolbar-btn:disabled { opacity: 0.35; cursor: default; }
-.toolbar-btn.zoom-display { min-width: 48px; font-variant-numeric: tabular-nums; }
+.toolbar-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.toolbar-btn:active:not(:disabled) {
+  background: var(--surface-selected);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.toolbar-btn.zoom-display {
+  min-width: 48px;
+  font-variant-numeric: tabular-nums;
+}
 
 .docx-scroll-container {
   flex: 1;
   overflow: auto;
-  background: #525659;
+  background: var(--surface-2);
 }
 
-.docx-scaled { min-height: 100%; }
-.docx-container { min-height: 100%; }
+.docx-scaled {
+  min-height: 100%;
+}
+
+.docx-container {
+  min-height: 100%;
+}
 
 .docx-container :deep(.docx-wrapper) {
-  padding: 20px 0;
-}
-
-.docx-container :deep(section.docx) {
-  margin: 10px auto 30px;
-  background: #fff;
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  padding: var(--space-4) 0;
 }
 
 .docx-unsupported,
@@ -192,30 +205,30 @@ watch(() => props.content, () => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  background: var(--editor-bg, #1e1e1e);
-  color: #888;
+  background: var(--surface-2);
+  color: var(--text-muted);
 }
 
 .docx-unsupported-title {
-  font-size: 1.2em;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: #aaa;
+  font-size: var(--font-md);
+  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-2);
+  color: var(--text-secondary);
 }
 
 .docx-unsupported-hint {
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   max-width: 400px;
   text-align: center;
   line-height: 1.5;
 }
 
 .docx-error {
-  padding: 16px;
-  color: #e74c3c;
-  background: #fdf0ef;
-  border-top: 1px solid #f5c6cb;
-  font-size: 0.85em;
+  padding: var(--space-4);
+  color: var(--danger);
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--font-sm);
   flex-shrink: 0;
 }
 </style>

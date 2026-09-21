@@ -11,6 +11,10 @@ import { createOpenAILLMProvider, buildMessages } from './llm/openai-client';
 import { createLogger } from './logger';
 import { LOG_CATEGORY } from './log-categories';
 import type { AgentContext } from './types/agent';
+import { resolvePath } from './tools/_shared/path';
+import { FileUndoStack } from './file-undo';
+import * as path from 'path';
+import { promises as fsp } from 'fs';
 
 const log = createLogger(LOG_CATEGORY.AGENT_RUNTIME);
 
@@ -32,6 +36,14 @@ export interface AgentRuntimeConfig {
   fileSystem?: IAgentFileSystem;
   /** 会话记忆的 token 预算(用于 LLM 历史滑窗);不设则用 DEFAULT_MEMORY_TOKEN_BUDGET */
   memoryTokenBudget?: number;
+  /** 工具协议：默认 xml（兼容现状）；fc/auto 走 OpenAI tools */
+  toolProtocol?: 'xml' | 'fc' | 'auto';
+  /** 覆盖 model 能力预设 */
+  modelCapabilities?: import('./llm/model-capabilities').ModelCapabilities;
+  /** 权限模式；默认 suggest */
+  permissionMode?: import('./permission').PermissionMode;
+  /** 写/bash 等需确认时的回调；未提供则按模式 deny（full-auto 除外） */
+  approver?: import('./permission').Approver;
 }
 
 export interface ChatResult {
@@ -51,6 +63,8 @@ export interface AgentRuntimeEvent {
   toolParams?: Record<string, string>;
   /** 工具执行耗时(tool_end 时携带) */
   durationMs?: number;
+  /** 写盘类工具变更 */
+  fileChanges?: import('./types/tool').FileChangeMeta[];
   error?: string;
 }
 
@@ -58,6 +72,29 @@ export type AgentRuntimeEventCallback = (event: AgentRuntimeEvent) => void;
 
 const DEFAULT_SYSTEM_PROMPT = [
   'You are an autonomous coding agent. Your goal is to understand, plan, and execute code changes.',
+  '',
+  '## Environment',
+  '- Desktop IDE on **Windows**. The `bash` tool runs **PowerShell**, not Unix bash.',
+  '- Prefer `list_dir` and `read_file` to explore the project. They handle Chinese paths well.',
+  '- Avoid Unix-only commands (`ls -la`, `find`, `head`, `pwd`) — they often fail on PowerShell.',
+  '- If a tool fails, do **not** repeat the same call. Switch tool or path, then answer.',
+  '- Call each tool at most 2 times with the same arguments. Move on.',
+  '',
+  '## Answering Questions',
+  'When the user asks about a project, experiment, file, or code:',
+  '- Explore first with read-only tools (`list_dir`, `read_file`, `search_code`).',
+  '- Open the relevant files/folders before answering. Do not stop at a parent directory listing',
+  '  if the question is about something inside it.',
+  '- After 3–8 purposeful tool calls, write the final answer from what you actually read.',
+  '- Answer in clear natural language (Markdown is fine). Ground claims in what you actually read.',
+  '- Do not dump raw tool output into the reply; summarize.',
+  '',
+  '## Language (IMPORTANT)',
+  '- **Always reply in the same language as the user\'s message.**',
+  '- If the user writes Chinese, the final answer MUST be Chinese (Markdown/代码标识符可保留英文).',
+  '- Do NOT mix long English prose into a Chinese answer.',
+  '- Never end the answer with only a file path or tool name; write a complete explanation.',
+  '- Internal reasoning may be in any language, but user-facing text follows the user language.',
   '',
   '## Making Changes',
   '',
@@ -80,7 +117,14 @@ const DEFAULT_SYSTEM_PROMPT = [
   '   in the file. Add surrounding context lines if it is not unique, or set replace_all="true".',
   '4. With `file_write`, the body is the COMPLETE final file content (no code fences).',
   '5. Think step by step: explore → plan → execute → explain.',
-  '6. Only invoke file tools when the user explicitly asks for file changes.',
+  '6. Use read-only tools freely to answer questions. Only use write tools (`file_edit`, `file_write`)',
+  '   when the user explicitly asks for file changes.',
+  '7. User-facing replies must be plain natural language / Markdown, **in the user\'s language**.',
+  '   Never leave tool-call markup (XML tags, DSML, function-call syntax) in your final answer.',
+  '8. In reasoning, describe intent in natural language. Do not emit tool-call markup there.',
+  '9. Use only the XML tool tags listed in Available Tools (e.g. `<list_dir path="..."/>`).',
+  '   Do not invent other call syntaxes.',
+  '10. Prefer Chinese for Chinese users: 结构、硬件说明、代码解读等正文一律用中文。',
 ].join('\n');
 
 export class AgentRuntime {
@@ -91,10 +135,15 @@ export class AgentRuntime {
   private mcpTools: ITool[] = [];
   private initialized = false;
   private sessionMap = new Map<string, Session>();
+  /** 同 sessionId 串行执行，避免并发写 SessionMemory 交错 */
+  private sessionLocks = new Map<string, Promise<unknown>>();
+  private undoStacks = new Map<string, FileUndoStack>();
+  private readonly approver?: import('./permission').Approver;
 
   constructor(config: AgentRuntimeConfig) {
     this.config = config;
     this.fs = config.fileSystem || this.createDefaultFS(config.workspaceRoot);
+    this.approver = config.approver;
     this.agentConfig = {
       mode: config.mode,
       model: config.provider.model,
@@ -104,37 +153,33 @@ export class AgentRuntime {
       temperature: config.temperature,
       maxTokens: config.maxTokens,
       enableBash: config.enableBash,
+      toolProtocol: config.toolProtocol || 'xml',
+      modelCapabilities: config.modelCapabilities,
+      permissionMode: config.permissionMode,
     };
   }
 
   private createDefaultFS(rootPath: string): IAgentFileSystem {
-    const { promises: fs } = require('fs');
-    const pathModule = require('path');
-    const root = pathModule.resolve(rootPath);
-
-    const resolve = (relative: string): string => {
-      const p = pathModule.resolve(root, relative);
-      if (!p.startsWith(root)) throw new Error('Path traversal not allowed');
-      return p;
-    };
+    const root = path.resolve(rootPath);
+    const resolve = (relative: string): string => resolvePath(root, relative);
 
     return {
       async readFile(relative: string): Promise<string> {
-        return fs.readFile(resolve(relative), 'utf-8');
+        return fsp.readFile(resolve(relative), 'utf-8');
       },
       async writeFile(relative: string, content: string): Promise<void> {
-        await fs.mkdir(pathModule.dirname(resolve(relative)), { recursive: true });
-        await fs.writeFile(resolve(relative), content, 'utf-8');
+        await fsp.mkdir(path.dirname(resolve(relative)), { recursive: true });
+        await fsp.writeFile(resolve(relative), content, 'utf-8');
       },
       async exists(relative: string): Promise<boolean> {
-        try { await fs.access(resolve(relative)); return true; } catch { return false; }
+        try { await fsp.access(resolve(relative)); return true; } catch { return false; }
       },
       async readDir(relative: string): Promise<{ name: string; path: string; isDirectory: boolean }[]> {
         const abs = resolve(relative);
-        const entries = await fs.readdir(abs, { withFileTypes: true });
+        const entries = await fsp.readdir(abs, { withFileTypes: true });
         return entries.map((e: { name: string; isDirectory: () => boolean }) => ({
           name: e.name,
-          path: pathModule.relative(root, pathModule.join(abs, e.name)).replace(/\\/g, '/'),
+          path: path.relative(root, path.join(abs, e.name)).replace(/\\/g, '/'),
           isDirectory: e.isDirectory(),
         }));
       },
@@ -178,12 +223,33 @@ export class AgentRuntime {
   }
 
   /**
+   * 将同一 sessionId 的操作串行化。
+   * 前一次无论成功或失败，下一次都会开始；错误不阻塞后续请求。
+   */
+  private enqueueSession<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.sessionLocks.get(sessionId) ?? Promise.resolve();
+    const run = prev.then(() => fn(), () => fn());
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.sessionLocks.set(sessionId, tail);
+    void tail.then(() => {
+      if (this.sessionLocks.get(sessionId) === tail) {
+        this.sessionLocks.delete(sessionId);
+      }
+    });
+    return run;
+  }
+
+  /**
    * 非流式 chat:build 模式走 Session+memory;plan 模式直连 LLM 不带记忆
    */
   async chat(
     message: string,
     payload: IDESnapshot | AgentContext,
-    sessionId = 'default'
+    sessionId = 'default',
+    signal?: AbortSignal,
   ): Promise<ChatResult> {
     await this.initialize();
 
@@ -192,14 +258,16 @@ export class AgentRuntime {
       const context = payload as AgentContext;
       const provider = createOpenAILLMProvider(this.agentConfig);
       const messages = buildMessages(this.agentConfig, message, context);
-      const content = await provider.chat(messages);
+      const content = await provider.chat(messages, { signal });
       return this.buildResult(content, 1, []);
     }
 
     const ideSnapshot = payload as IDESnapshot;
-    const session = this.getOrCreateSession(sessionId);
-    const result = await session.start(message, ideSnapshot);
-    return this.buildResult(result.mainResult.content, result.mainResult.turns, result.mainResult.toolCalls, result.mainResult.thinking);
+    return this.enqueueSession(sessionId, async () => {
+      const session = this.getOrCreateSession(sessionId);
+      const result = await session.start(message, ideSnapshot, undefined, signal);
+      return this.buildResult(result.mainResult.content, result.mainResult.turns, result.mainResult.toolCalls, result.mainResult.thinking);
+    });
   }
 
   async chatStream(
@@ -213,11 +281,10 @@ export class AgentRuntime {
 
     if (this.agentConfig.mode === 'plan') {
       const context = payload as AgentContext;
-      return this.runPlanStream(message, context, onEvent);
+      return this.runPlanStream(message, context, onEvent, signal);
     }
 
     const ideSnapshot = payload as IDESnapshot;
-    const session = this.getOrCreateSession(sessionId);
 
     const emit = (e: AgentRuntimeEvent) => onEvent?.(e);
     const sessionEvent = (se: SessionEvent) => {
@@ -232,7 +299,7 @@ export class AgentRuntime {
           emit({ type: 'tool_start', toolName: se.toolType, toolLabel: se.toolLabel, toolParams: se.toolParams });
           break;
         case 'tool_end':
-          emit({ type: 'tool_end', toolName: se.toolType, durationMs: se.durationMs });
+          emit({ type: 'tool_end', toolName: se.toolType, durationMs: se.durationMs, fileChanges: se.fileChanges });
           break;
         case 'tool_result':
           emit({ type: 'tool_result', toolName: se.toolType, text: se.data });
@@ -245,14 +312,17 @@ export class AgentRuntime {
       }
     };
 
-    try {
-      const result = await session.startStream(message, ideSnapshot, sessionEvent, signal);
-      emit({ type: 'done' });
-      return this.buildResult(result.mainResult.content, result.mainResult.turns, result.mainResult.toolCalls, result.mainResult.thinking);
-    } catch (e: any) {
-      emit({ type: 'error', error: e.message || String(e) });
-      throw e;
-    }
+    return this.enqueueSession(sessionId, async () => {
+      const session = this.getOrCreateSession(sessionId);
+      try {
+        const result = await session.startStream(message, ideSnapshot, sessionEvent, signal);
+        emit({ type: 'done' });
+        return this.buildResult(result.mainResult.content, result.mainResult.turns, result.mainResult.toolCalls, result.mainResult.thinking);
+      } catch (e: any) {
+        emit({ type: 'error', error: e.message || String(e) });
+        throw e;
+      }
+    });
   }
 
   get mcpStatus(): { serverCount: number; toolCount: number } {
@@ -261,6 +331,11 @@ export class AgentRuntime {
       serverCount: this.mcpManager.serverCount,
       toolCount: this.mcpTools.length,
     };
+  }
+
+  /** MCP 工具元数据（供 CLI /tools 等展示）；未连接时为空数组 */
+  listMcpTools(): ReturnType<McpManager['getTools']> {
+    return this.mcpManager?.getTools() ?? [];
   }
 
   get fileSystem(): IAgentFileSystem {
@@ -272,12 +347,35 @@ export class AgentRuntime {
   private getOrCreateSession(sessionId: string): Session {
     let session = this.sessionMap.get(sessionId);
     if (!session) {
-      const agent = this.createAgent();
+      const agent = this.createAgent(this.getUndoStack(sessionId), sessionId);
       const memory = new SessionMemory(sessionId, this.config.memoryTokenBudget ?? DEFAULT_MEMORY_TOKEN_BUDGET);
       session = new Session(sessionId, agent, memory);
       this.sessionMap.set(sessionId, session);
     }
     return session;
+  }
+
+  private getUndoStack(sessionId: string): FileUndoStack {
+    let stack = this.undoStacks.get(sessionId);
+    if (!stack) {
+      stack = new FileUndoStack();
+      this.undoStacks.set(sessionId, stack);
+    }
+    return stack;
+  }
+
+  /** 撤销该会话最近一次 Agent 写盘 */
+  async undoLastFileChange(sessionId = 'default'): Promise<
+    | { ok: true; path: string; existed: boolean; bytes: number }
+    | { ok: false; reason: string }
+  > {
+    const stack = this.undoStacks.get(sessionId);
+    if (!stack) return { ok: false, reason: 'undo stack empty' };
+    return stack.undoLast(this.config.workspaceRoot);
+  }
+
+  getUndoStackSize(sessionId = 'default'): number {
+    return this.undoStacks.get(sessionId)?.size ?? 0;
   }
 
   /** 返回展示用消息(给前端 GET 接口用) */
@@ -294,7 +392,7 @@ export class AgentRuntime {
 
   /** 用持久化数据恢复 session memory */
   restoreSessionMemory(sessionId: string, data: unknown): void {
-    const agent = this.createAgent();
+    const agent = this.createAgent(this.getUndoStack(sessionId), sessionId);
     const memory = new SessionMemory(sessionId, this.config.memoryTokenBudget ?? DEFAULT_MEMORY_TOKEN_BUDGET);
     memory.deserialize(data);
     const session = new Session(sessionId, agent, memory);
@@ -317,9 +415,48 @@ export class AgentRuntime {
     this.sessionMap.delete(sessionId);
   }
 
+  /** 每请求/设置变更时切换权限模式（影响后续工具闸门） */
+  setPermissionMode(mode: NonNullable<AgentRuntimeConfig['permissionMode']>): void {
+    this.config.permissionMode = mode;
+    this.agentConfig.permissionMode = mode;
+    for (const session of this.sessionMap.values()) {
+      session.setPermissionMode(mode);
+    }
+  }
+
+  /**
+   * 刷新 LLM 凭证/模型（工作区 runtime 打开后用户可能新配了 API Key）。
+   * 会替换各会话主 Agent，但保留 SessionMemory。
+   */
+  setProviderCredentials(provider: {
+    apiUrl?: string;
+    apiKey?: string;
+    model?: string;
+  }): void {
+    const next = {
+      apiUrl: provider.apiUrl || this.agentConfig.apiUrl,
+      apiKey: provider.apiKey || this.agentConfig.apiKey,
+      model: provider.model || this.agentConfig.model,
+    };
+    this.config.provider = next;
+    this.agentConfig.apiUrl = next.apiUrl;
+    this.agentConfig.apiKey = next.apiKey;
+    this.agentConfig.model = next.model;
+
+    for (const [sessionId, session] of this.sessionMap.entries()) {
+      const agent = this.createAgent(this.getUndoStack(sessionId), sessionId);
+      session.replaceMainAgent(agent);
+      session.setPermissionMode(this.config.permissionMode || 'suggest');
+    }
+    log.debug('provider credentials updated on runtime', {
+      hasKey: Boolean(next.apiKey),
+      model: next.model,
+    });
+  }
+
   // ====================== 内部实现 ======================
 
-  private createAgent(): Agent {
+  private createAgent(undoStack?: FileUndoStack, sessionId?: string): Agent {
     return new Agent(
       {
         id: 'main',
@@ -331,14 +468,21 @@ export class AgentRuntime {
       },
       this.agentConfig,
       this.config.workspaceRoot,
-      this.mcpTools.length > 0 ? this.mcpTools : undefined
+      this.mcpTools.length > 0 ? this.mcpTools : undefined,
+      {
+        approver: this.approver,
+        permissionMode: this.config.permissionMode,
+        undoStack,
+        sessionId,
+      },
     );
   }
 
   private async runPlanStream(
     message: string,
     context: AgentContext,
-    onEvent?: AgentRuntimeEventCallback
+    onEvent?: AgentRuntimeEventCallback,
+    signal?: AbortSignal,
   ): Promise<ChatResult> {
     const emit = (e: AgentRuntimeEvent) => onEvent?.(e);
     const provider = createOpenAILLMProvider(this.agentConfig);
@@ -346,7 +490,7 @@ export class AgentRuntime {
     try {
       const content = await provider.chatStream(messages, (type, text) => {
         emit({ type: type === 'thinking' ? 'thinking' : 'chunk', text });
-      });
+      }, { signal });
       emit({ type: 'done' });
       return this.buildResult(content, 1, []);
     } catch (e: any) {

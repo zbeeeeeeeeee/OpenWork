@@ -99,12 +99,16 @@ export function useFileSystem() {
     }
   }
 
-  /** ArrayBuffer → base64 字符串 */
+  /** ArrayBuffer → base64 字符串（分块，避免大文件卡死主线程） */
   function arrayBufferToBase64(buffer: ArrayBuffer): string {
     const bytes = new Uint8Array(buffer);
+    const CHUNK = 0x8000;
     let binary = '';
-    for (let i = 0; i < bytes.length; i++) {
-      binary += String.fromCharCode(bytes[i]);
+    for (let i = 0; i < bytes.length; i += CHUNK) {
+      binary += String.fromCharCode.apply(
+        null,
+        bytes.subarray(i, Math.min(i + CHUNK, bytes.length)) as unknown as number[],
+      );
     }
     return btoa(binary);
   }
@@ -122,6 +126,11 @@ export function useFileSystem() {
     return `data:${mime};base64,${arrayBufferToBase64(buffer)}`;
   }
 
+  /** 文本打开上限：超过则拒绝，避免 Monaco 卡死整个渲染进程 */
+  const MAX_TEXT_OPEN_BYTES = 2 * 1024 * 1024;
+  /** 二进制/办公文档打开上限 */
+  const MAX_BINARY_OPEN_BYTES = 20 * 1024 * 1024;
+
   /** 读取文件并在编辑器中打开为标签页 */
   async function openAndReadFile(filePath: string) {
     isLoading.value = true;
@@ -130,6 +139,23 @@ export function useFileSystem() {
       const ext = filePath.split('.').pop()?.toLowerCase() || '';
       const viewMode = getViewModeFromPath(filePath);
       const client = getClient();
+
+      // 先探测大小，过大直接拒绝，防止卡死 UI
+      try {
+        const st = await client.stat?.(filePath);
+        const size = st?.size;
+        if (typeof size === 'number') {
+          const limit = viewMode === 'code' || viewMode === 'markdown' || viewMode === 'html'
+            ? MAX_TEXT_OPEN_BYTES
+            : MAX_BINARY_OPEN_BYTES;
+          if (size > limit) {
+            error.value = t('fileTree.fileTooLarge', { size: Math.round(size / 1024), limit: Math.round(limit / 1024) });
+            return;
+          }
+        }
+      } catch {
+        /* stat 失败则继续尝试打开 */
+      }
 
       if (viewMode === 'image') {
         const buffer = await client.readFileBuffer(filePath);
@@ -151,10 +177,15 @@ export function useFileSystem() {
         store.openFile(filePath, '');
       } else {
         const content = await client.readFile(filePath);
+        if (content.length > MAX_TEXT_OPEN_BYTES) {
+          error.value = t('fileTree.fileTooLarge', { size: Math.round(content.length / 1024), limit: Math.round(MAX_TEXT_OPEN_BYTES / 1024) });
+          return;
+        }
         store.openFile(filePath, content);
       }
     } catch (e: any) {
       error.value = e.message;
+      console.error('[openAndReadFile]', filePath, e);
     } finally {
       isLoading.value = false;
     }
@@ -422,25 +453,25 @@ export function useFileSystem() {
 
   /** 仅获取文件夹路径（通过对话框选择），不打开工作区 */
   async function resolveFolderPath(): Promise<string | null> {
+    if (openFolderDialogHandler) {
+      return await openFolderDialogHandler();
+    }
     if (env === 'electron') {
       const client = getClient();
       return await client.openFolder();
-    }
-    if (openFolderDialogHandler) {
-      return await openFolderDialogHandler();
     }
     return null;
   }
 
   /** 仅获取文件路径（通过对话框选择），不打开工作区 */
   async function resolveFilePath(): Promise<string | null> {
+    if (openFileDialogHandler) {
+      return await openFileDialogHandler();
+    }
     if (env === 'electron') {
       const client = getClient();
       const result = await client.openFile();
       return result?.path ?? null;
-    }
-    if (openFileDialogHandler) {
-      return await openFileDialogHandler();
     }
     return null;
   }
@@ -481,70 +512,20 @@ export function useFileSystem() {
     await openWorkspaceAtPath(folderPath);
   }
 
-  /** 根据当前环境选择合适的"打开文件夹"方式 */
+  /** 打开文件夹：先选择目录，再走统一的 workspace 打开逻辑 */
   async function openFolderDialog(): Promise<string | null> {
-    if (env === 'electron') {
-      const client = getClient();
-      const root = await client.openFolder();
-      if (root) {
-        store.exitSingleFileMode();
-        store.tabs.length = 0;
-        store.activeTabId = null;
-
-        const sc = getServerClient();
-        if (store.activeWorkspaceId) {
-          try { await sc.closeWorkspace(store.activeWorkspaceId); } catch { /* ignore */ }
-        }
-        try {
-          const info = await sc.openWorkspace(root);
-          client.setWorkspaceRoot?.(info.rootPath);
-          store.workspaceRoots = [{ path: info.rootPath, name: info.rootName, mode: 'local', workspaceId: info.workspaceId }];
-          store.activeWorkspaceId = info.workspaceId;
-          const sessionStore = useSessionStore();
-          await sessionStore.bindWorkspace(info.workspaceId, info.agentSessions, info.rootPath);
-        } catch {
-          error.value = t('fs.singleFileWorkspaceFailed');
-          return null;
-        }
-
-        await loadDirectory('.');
-        window.electronAPI?.registerWorkspace?.(root);
-      }
-      return root;
-    }
-
-    // server / browser 模式：使用自定义对话框
-    if (openFolderDialogHandler) {
-      const rootPath = await openFolderDialogHandler();
-      if (rootPath) {
-        await openWorkspaceAtPath(rootPath);
-        return rootPath;
-      }
-    }
-    return null;
+    const rootPath = await resolveFolderPath();
+    if (!rootPath) return null;
+    await openWorkspaceViaPath(rootPath);
+    return rootPath;
   }
 
-  /** 根据当前环境选择合适的"打开文件"方式 */
+  /** 打开文件：先选择文件，再走统一的 lightweight workspace 打开逻辑 */
   async function openFileDialog(): Promise<string | null> {
-    if (env === 'electron') {
-      const client = getClient();
-      const result = await client.openFile();
-      if (result) {
-        await openFileAsLightweightWorkspace(result.path);
-        return result.path;
-      }
-      return null;
-    }
-
-    // server 模式：使用自定义对话框
-    if (openFileDialogHandler) {
-      const filePath = await openFileDialogHandler();
-      if (filePath) {
-        await openFileAsLightweightWorkspace(filePath);
-        return filePath;
-      }
-    }
-    return null;
+    const filePath = await resolveFilePath();
+    if (!filePath) return null;
+    await openFileAsLightweightWorkspace(filePath);
+    return filePath;
   }
 
   /** 通过 server API 打开工作区 */
@@ -841,6 +822,28 @@ export function useFileSystem() {
   onMounted(() => window.addEventListener('keydown', handleKeydown));
   onUnmounted(() => window.removeEventListener('keydown', handleKeydown));
 
+  /**
+   * Agent 写盘后刷新已打开标签。
+   * - 仅处理文本型 viewMode；脏标签跳过（避免覆盖用户未保存修改）
+   */
+  async function reloadTabsForPaths(paths: string[]) {
+    const client = getClient();
+    for (const p of paths) {
+      const tab = store.findTabByPath(p);
+      if (!tab || tab.isUntitled) continue;
+      if (tab.isDirty) continue;
+      if (tab.viewMode !== 'code' && tab.viewMode !== 'markdown' && tab.viewMode !== 'html') {
+        continue;
+      }
+      try {
+        const content = await client.readFile(tab.path);
+        store.replaceTabContent(tab.id, content);
+      } catch (e: any) {
+        error.value = e.message;
+      }
+    }
+  }
+
   return {
     client: activeClient,
     isLoading,
@@ -848,6 +851,7 @@ export function useFileSystem() {
     env,
     loadDirectory,
     openAndReadFile,
+    reloadTabsForPaths,
     openFileAsLightweightWorkspace,
     saveCurrentFile,
     openFolderDialog,
@@ -878,4 +882,25 @@ export function useFileSystem() {
     setOpenFileDialogHandler,
     setNewFileHandler,
   };
+}
+
+/**
+ * 独立刷新已打开标签（AgentChatB 用；勿再调 useFileSystem() 以免重复注册快捷键）。
+ */
+export async function reloadTabsForPaths(paths: string[]) {
+  const store = useEditorStore();
+  const client = createFileServiceClient();
+  for (const p of paths) {
+    const tab = store.findTabByPath(p);
+    if (!tab || tab.isUntitled || tab.isDirty) continue;
+    if (tab.viewMode !== 'code' && tab.viewMode !== 'markdown' && tab.viewMode !== 'html') {
+      continue;
+    }
+    try {
+      const content = await client.readFile(tab.path);
+      store.replaceTabContent(tab.id, content);
+    } catch {
+      /* ignore single-file reload failures */
+    }
+  }
 }

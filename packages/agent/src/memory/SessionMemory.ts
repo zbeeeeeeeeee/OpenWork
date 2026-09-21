@@ -1,5 +1,6 @@
 import { createLogger } from '../logger';
 import { LOG_CATEGORY } from '../log-categories';
+import { sanitizeThinking, sanitizeDisplayContent } from '../sanitize';
 import {
   type MemoryEntry,
   type ToolCallRecord,
@@ -158,7 +159,7 @@ export class SessionMemory {
   private buildIDESnapshotMessages(snapshot: IDESnapshot): LLMMessage[] {
     const parts: string[] = [];
 
-    if (snapshot.openFilePaths.length > 0) {
+    if (snapshot.openFilePaths && snapshot.openFilePaths.length > 0) {
       const activePath = snapshot.activeFile?.path;
       const otherPaths = snapshot.openFilePaths.filter(p => p !== activePath);
       if (otherPaths.length > 0) {
@@ -169,8 +170,12 @@ export class SessionMemory {
     }
 
     if (snapshot.fileTree && snapshot.fileTree.length > 0) {
+      const tree = snapshot.fileTree.slice(0, 200);
       parts.push('\n## Project File Tree');
-      parts.push(snapshot.fileTree.join('\n'));
+      parts.push(tree.join('\n'));
+      if (snapshot.fileTree.length > tree.length) {
+        parts.push(`... (${snapshot.fileTree.length - tree.length} more entries; use list_dir to explore)`);
+      }
     }
 
     if (snapshot.cursorPosition) {
@@ -317,19 +322,28 @@ export class SessionMemory {
 
         case 'assistant': {
           const blocks: DisplayBlock[] = [];
-          if (entry.thinking) {
+          let cleanThinking = entry.thinking ? sanitizeThinking(entry.thinking) : '';
+          // 过短思考碎片不进展示，避免英文 "The" 之类噪音
+          if (cleanThinking.trim().length < 12) cleanThinking = '';
+          let cleanContent = entry.content ? sanitizeDisplayContent(entry.content) : '';
+          // 清洗后正文为空、但 thinking 有内容时，不要让 UI 完全空白：
+          // 保留 thinking 块；正文用占位提示（避免用户以为没有输出）
+          if (!cleanContent && cleanThinking && !entry.toolCall) {
+            cleanContent = '*[无额外正文，详见思考过程]*';
+          }
+          if (cleanThinking) {
             blocks.push({
               id: `${entry.id}_t`,
               type: 'thinking',
-              content: entry.thinking,
+              content: cleanThinking,
               completed: true,
             });
           }
-          if (entry.content) {
+          if (cleanContent) {
             blocks.push({
               id: `${entry.id}_r`,
               type: 'response',
-              content: entry.content,
+              content: cleanContent,
             });
           }
           if (entry.toolCall) {
@@ -338,9 +352,9 @@ export class SessionMemory {
           result.push({
             id: entry.id,
             role: 'assistant',
-            content: entry.content,
+            content: cleanContent,
             timestamp: entry.timestamp,
-            thinking: entry.thinking,
+            thinking: cleanThinking || undefined,
             blocks,
             error: entry.error,
           });

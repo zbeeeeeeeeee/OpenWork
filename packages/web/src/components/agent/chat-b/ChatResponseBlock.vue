@@ -4,13 +4,14 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import { sanitizeDisplayContent } from '@openwork/agent/sanitize';
 import { renderMarkdown } from '../../../services/markdown';
 
 const props = defineProps<{
   content: string;
 }>();
 
-const renderedHtml = computed(() => renderMarkdown(props.content));
+const renderedHtml = computed(() => renderMarkdown(sanitizeDisplayContent(props.content || '')));
 </script>
 
 <style scoped>
@@ -22,7 +23,8 @@ const renderedHtml = computed(() => renderMarkdown(props.content));
 }
 .chat-response :deep(p) { margin: 4px 0; }
 .chat-response :deep(pre) {
-  background: #0d1117;
+  background: #1c2128;
+  color: #e6edf3;
   border: 1px solid var(--border-color);
   border-radius: 4px;
   padding: 8px 10px;
@@ -31,12 +33,20 @@ const renderedHtml = computed(() => renderMarkdown(props.content));
   font-size: 12px;
   line-height: 1.4;
 }
+.chat-response :deep(pre) :deep(code),
+.chat-response :deep(pre code) {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  color: inherit;
+  background: transparent;
+  padding: 0;
+}
 .chat-response :deep(code) {
   font-family: 'Consolas', 'Courier New', monospace;
   font-size: 12px;
 }
 .chat-response :deep(:not(pre) > code) {
-  background: var(--bg-tertiary);
+  background: var(--bg-tertiary, rgba(255, 255, 255, 0.08));
   padding: 1px 4px;
   border-radius: 3px;
   color: #e06c75;

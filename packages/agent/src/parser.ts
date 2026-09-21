@@ -61,6 +61,81 @@ export function parseToolCalls(text: string, registry: ToolRegistry): ParsedTool
     tools.push({ type: tag, params });
   }
 
+  if (tools.length === 0) {
+    return parseDsmlToolCalls(text, registry);
+  }
+  return tools;
+}
+
+/**
+ * 回退解析 DeepSeek/Anthropic 风格 DSML 工具标记。
+ * 部分国产模型会在 content 里吐 <｜｜DSML｜｜ invoke name="bash">… 而非我们的 XML 标签。
+ */
+export function parseDsmlToolCalls(text: string, registry: ToolRegistry): ParsedTool[] {
+  const tools: ParsedTool[] = [];
+  if (!text) return tools;
+  const hasDsml = /[｜|]DSML[｜|]/.test(text) || /<invoke\b/i.test(text);
+  if (!hasDsml) return tools;
+
+  const bar = '[｜|]';
+  const invokeBlock = new RegExp(
+    `<${bar}+DSML${bar}+\\s*invoke\\b([^>]*)>([\\s\\S]*?)<\\/${bar}+DSML${bar}+\\s*invoke\\s*>`,
+    'gi',
+  );
+  let m: RegExpExecArray | null;
+  while ((m = invokeBlock.exec(text)) !== null) {
+    const attrs = m[1] || '';
+    const body = m[2] || '';
+    const nameMatch = /name\s*=\s*"([^"]+)"/i.exec(attrs);
+    if (!nameMatch) continue;
+    // 兼容 name="list_dir path=..." 这种属性粘连：取第一个 token 作为工具名
+    const rawName = nameMatch[1]!.trim();
+    const toolName = rawName.split(/\s+/)[0]!;
+    if (!registry.has(toolName)) continue;
+    const params: Record<string, string> = {};
+    // name 属性里粘连的 path="..."
+    const gluedPath = /path\s*=\s*"([^"]*)"/i.exec(attrs);
+    if (gluedPath) params.path = gluedPath[1]!;
+    const paramRe = new RegExp(
+      `<${bar}+DSML${bar}+\\s*parameter\\b([^>]*)>([\\s\\S]*?)<\\/${bar}+DSML${bar}+\\s*parameter\\s*>`,
+      'gi',
+    );
+    let pm: RegExpExecArray | null;
+    while ((pm = paramRe.exec(body)) !== null) {
+      const pAttrs = pm[1] || '';
+      const pName = /name\s*=\s*"([^"]+)"/i.exec(pAttrs);
+      if (!pName) continue;
+      const key = pName[1]!;
+      params[key] = (pm[2] || '').trim();
+    }
+    tools.push({ type: toolName, params });
+  }
+
+  // 自闭合 / 残缺 invoke：仅匹配以 /> 结尾的标签，避免与成对 block 的开标签重复
+  const invokeSelf = new RegExp(
+    `<${bar}+DSML${bar}+\\s*invoke\\b([^>]*?)\\/\\s*>`,
+    'gi',
+  );
+  while ((m = invokeSelf.exec(text)) !== null) {
+    const attrs = m[1] || '';
+    const nameMatch = /name\s*=\s*"([^"]*)"/i.exec(attrs);
+    if (!nameMatch) continue;
+    const raw = nameMatch[1]!.trim();
+    const toolName = raw.split(/\s+/)[0]!;
+    if (!registry.has(toolName)) continue;
+    // 已在 block 解析中出现过同名且参数相近时仍允许（模型可能连发）
+    const params: Record<string, string> = {};
+    const pathM = /path\s*=\s*"([^"]*)"/i.exec(attrs) || /path\s*=\s*"([^"]*)/i.exec(raw + '"');
+    if (pathM) params.path = pathM[1]!;
+    // name="list_dir path="G:\..."  → path 可能残留在 name 值后半段
+    if (!params.path) {
+      const after = raw.split(/\s+/).slice(1).join(' ');
+      const p2 = /path\s*=\s*"?([^"]*)"?/i.exec(after);
+      if (p2) params.path = p2[1]!;
+    }
+    tools.push({ type: toolName, params });
+  }
+
   return tools;
 }
 

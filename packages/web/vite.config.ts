@@ -14,6 +14,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'), // @/ → src/ 路径别名
+      // agent dist 为 CJS，Vite ESM 命名导出 interop 不可靠；展示清洗是纯函数，直接走 TS 源码
+      '@openwork/agent/sanitize': resolve(__dirname, '../agent/src/sanitize.ts'),
     },
   },
   define: {
@@ -39,7 +41,7 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['monaco-editor'], // 预构建 monaco-editor 以加速冷启动
-    exclude: ['async-validator'],
+    exclude: ['async-validator', '@openwork/agent'],
   },
   worker: {
     format: 'es', // Web Worker 使用 ES 模块格式

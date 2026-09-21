@@ -7,10 +7,12 @@ import { createMcpRouter } from './routes/mcp';
 import { createConfigRouter } from './routes/config';
 import { createWorkspaceRouter } from './routes/workspace';
 import { createLLMRouter } from './routes/llm';
+import { createGitRouter } from './routes/git';
 import { WorkspaceManager } from './workspace/manager';
 import { LLMGateway, createLogger, LOG_CATEGORY } from '@openwork/agent';
 import { requestLoggerMiddleware } from './middleware/requestLogger';
 import { authMiddleware } from './middleware/auth';
+import { approvalBroker } from './approval-broker';
 
 const log = createLogger(LOG_CATEGORY.HTTP);
 
@@ -28,7 +30,7 @@ export function createApp(config: ServerConfig = {}) {
   const host = config.host ?? '0.0.0.0';
   const configDir = config.configDir || './config';
 
-  const workspaceManager = new WorkspaceManager(configDir);
+  const workspaceManager = new WorkspaceManager(configDir, approvalBroker.request);
   const llmGateway = new LLMGateway(configDir);
 
   app.use(cors({ origin: config.corsOrigin ?? '*', methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'] }));
@@ -42,6 +44,7 @@ export function createApp(config: ServerConfig = {}) {
   app.use('/api/config', createConfigRouter(configDir));
   app.use('/api/workspace', createWorkspaceRouter(workspaceManager, llmGateway));
   app.use('/api/llm', createLLMRouter(llmGateway));
+  app.use('/api/git', createGitRouter());
 
   app.get('/api/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: Date.now() });

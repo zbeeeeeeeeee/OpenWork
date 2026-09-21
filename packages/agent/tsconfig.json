@@ -3,7 +3,18 @@
   "compilerOptions": {
     "outDir": "./dist",
     "rootDir": "./src",
-    "types": ["node"]
+    "types": ["node"],
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "baseUrl": ".",
+    "paths": {
+      "@modelcontextprotocol/sdk/client": ["../../node_modules/@modelcontextprotocol/sdk/dist/cjs/client/index.d.ts"],
+      "@modelcontextprotocol/sdk/client/stdio.js": ["../../node_modules/@modelcontextprotocol/sdk/dist/cjs/client/stdio.d.ts"],
+      "@modelcontextprotocol/sdk/client/sse.js": ["../../node_modules/@modelcontextprotocol/sdk/dist/cjs/client/sse.d.ts"],
+      "@modelcontextprotocol/sdk/client/streamableHttp.js": ["../../node_modules/@modelcontextprotocol/sdk/dist/cjs/client/streamableHttp.d.ts"],
+      "@modelcontextprotocol/sdk/types": ["../../node_modules/@modelcontextprotocol/sdk/dist/cjs/types.d.ts"],
+      "@modelcontextprotocol/sdk/shared/transport": ["../../node_modules/@modelcontextprotocol/sdk/dist/cjs/shared/transport.d.ts"]
+    }
   },
   "include": ["src/**/*"]
 }

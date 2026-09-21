@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   stat: (filePath: string) => ipcRenderer.invoke('file:stat', filePath),
   rename: (oldPath: string, newPath: string) => ipcRenderer.invoke('file:rename', oldPath, newPath),
   openFolderPath: (folderPath: string) => ipcRenderer.invoke('file:openFolderPath', folderPath),
+  listDirectories: (path?: string) => ipcRenderer.invoke('picker:listDirectories', path),
+  createDirectory: (parent: string, name: string) => ipcRenderer.invoke('picker:createDirectory', parent, name),
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
   openFile: () => ipcRenderer.invoke('dialog:openFile'),
   saveFile: (filePath: string, content: string) => ipcRenderer.invoke('dialog:saveFile', filePath, content),

@@ -6,12 +6,20 @@ import {
   type AgentContext,
   type IDESnapshot,
 } from '@openwork/agent';
-import { createLogger } from '@openwork/agent';
+import { createLogger, buildApprovalPreview } from '@openwork/agent';
 import { loadEnabledMcpServers } from './mcp';
 import type { WorkspaceManager } from '../workspace/manager';
 import type { LLMGateway } from '@openwork/agent';
+import { approvalBroker, resolveRequestPermissionMode, handleApprovalDecision } from '../approval-broker';
 
 const log = createLogger('AgentRouter');
+
+/** bash 工具开关:默认启用;OPENWORK_ENABLE_BASH=0/false 时关闭 */
+function resolveEnableBash(): boolean {
+  const v = process.env.OPENWORK_ENABLE_BASH;
+  if (v === undefined || v === '') return true;
+  return !(v === '0' || v.toLowerCase() === 'false');
+}
 
 function buildRuntimeConfig(body: Record<string, unknown>, configDir: string, llmGateway: LLMGateway, workspaceRoot?: string): AgentRuntimeConfig {
   const cfg = (body.config as any) || body;
@@ -36,14 +44,40 @@ function buildRuntimeConfig(body: Record<string, unknown>, configDir: string, ll
     mcpServers: mode === 'build' ? loadEnabledMcpServers(configDir) : undefined,
     memoryTokenBudget: cfg.memoryTokenBudget ? Number(cfg.memoryTokenBudget) : undefined,
     enableBash: resolveEnableBash(),
+    permissionMode: resolveRequestPermissionMode(cfg.permissionMode),
+    toolProtocol: cfg.toolProtocol === 'fc' || cfg.toolProtocol === 'auto' || cfg.toolProtocol === 'xml'
+      ? cfg.toolProtocol
+      : undefined,
+    approver: approvalBroker.request,
   };
 }
 
-/** bash 工具开关:默认启用;OPENWORK_ENABLE_BASH=0/false 时关闭 */
-function resolveEnableBash(): boolean {
-  const v = process.env.OPENWORK_ENABLE_BASH;
-  if (v === undefined || v === '') return true;
-  return !(v === '0' || v.toLowerCase() === 'false');
+/** 把当前 Provider 凭证刷进已缓存的 workspace runtime（打开工作区后再配 Key 也要生效） */
+function applyProviderToRuntime(
+  runtime: AgentRuntime,
+  cfg: Record<string, unknown>,
+  llmGateway: LLMGateway,
+): { apiKey?: string; model?: string; apiUrl?: string } {
+  const providerId = cfg.providerId as string | undefined;
+  const provider = providerId
+    ? llmGateway.getProvider(providerId)
+    : llmGateway.getActiveProvider();
+  const credentials = {
+    apiUrl: provider?.apiUrl,
+    apiKey: provider?.apiKey,
+    model: provider?.model,
+  };
+  runtime.setProviderCredentials(credentials);
+  log.info(
+    `apply provider: id=${providerId || 'active'} name=${provider?.name || 'none'} hasKey=${Boolean(credentials.apiKey)} model=${credentials.model || 'none'}`,
+    {
+      providerId: providerId || null,
+      providerName: provider?.name,
+      hasKey: Boolean(credentials.apiKey),
+      model: credentials.model,
+    },
+  );
+  return credentials;
 }
 
 interface StreamRequestBody {
@@ -112,6 +146,9 @@ export function createAgentRouter(configDir: string, workspaceManager: Workspace
         const latestMcpServers = loadEnabledMcpServers(configDir);
         await runtime.reinitialize(latestMcpServers.length > 0 ? latestMcpServers : undefined);
       }
+      const cfg = (req.body.config as any) || {};
+      applyProviderToRuntime(runtime, cfg, llmGateway);
+      runtime.setPermissionMode(resolveRequestPermissionMode(cfg.permissionMode));
 
       // build 模式:走 ideSnapshot;plan 模式:走 context
       const payload = ideSnapshot ?? context;
@@ -157,6 +194,23 @@ export function createAgentRouter(configDir: string, workspaceManager: Workspace
       res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
+    // 将本连接接到确认代理：pending 时把 approval_required 推给前端
+    const requestSessionId = sessionId || 'default';
+    const unsubscribeApproval = approvalBroker.subscribe((approvalReq) => {
+      // 仅推送与当前请求匹配的 approval（无 sessionId 的旧事件仍推送，前端兜底）
+      if (approvalReq.sessionId && approvalReq.sessionId !== requestSessionId) return;
+      writeSSE({
+        approval_required: {
+          approvalId: approvalReq.approvalId,
+          toolName: approvalReq.toolName,
+          label: approvalReq.label,
+          mode: approvalReq.mode,
+          preview: buildApprovalPreview(approvalReq.params),
+          sessionId: approvalReq.sessionId,
+        },
+      });
+    });
+
     const runtime = await getRuntime(req.body, workspaceRoot);
     const startMs = Date.now();
 
@@ -168,6 +222,11 @@ export function createAgentRouter(configDir: string, workspaceManager: Workspace
     const keepAlive = setInterval(() => { res.write(': heartbeat\n\n'); }, 15000);
 
     try {
+      // 每请求覆盖权限模式（前端设置 / 默认 auto-edit）并刷新 LLM 凭证
+      const cfg = (body.config as any) || {};
+      applyProviderToRuntime(runtime, cfg, llmGateway);
+      runtime.setPermissionMode(resolveRequestPermissionMode(cfg.permissionMode));
+
       const mcpStatus = runtime.mcpStatus;
       if (mcpStatus.serverCount > 0) {
         await runtime.initialize();
@@ -193,7 +252,17 @@ export function createAgentRouter(configDir: string, workspaceManager: Workspace
               writeSSE({ tool_start: { toolType: e.toolName, toolLabel: e.toolLabel || '', toolParams: e.toolParams || {} } });
               break;
             case 'tool_end':
-              writeSSE({ tool_end: { toolType: e.toolName, durationMs: e.durationMs || 0 } });
+              writeSSE({
+                tool_end: {
+                  toolType: e.toolName,
+                  durationMs: e.durationMs || 0,
+                  fileChanges: e.fileChanges,
+                },
+              });
+              if (e.fileChanges && e.fileChanges.length > 0) {
+                const paths = Array.from(new Set(e.fileChanges.map((c) => c.path)));
+                writeSSE({ file_changed: { paths, fileChanges: e.fileChanges } });
+              }
               break;
             case 'tool_result':
               writeSSE({ tool_result: { name: e.toolName, content: e.text } });
@@ -224,13 +293,53 @@ export function createAgentRouter(configDir: string, workspaceManager: Workspace
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       reqLog.error(`Stream error: ${msg}`);
+      // 失败也落盘，避免用户消息在内存里丢失
+      if (workspaceId && sessionId) {
+        try {
+          await workspaceManager.persistSessionMemory(workspaceId, sessionId);
+        } catch (e: any) {
+          reqLog.warn(`persistSessionMemory after error failed: ${e.message}`);
+        }
+      }
       writeSSE({ error: msg });
       writeSSE({ done: true });
     } finally {
       clearInterval(keepAlive);
+      unsubscribeApproval();
       if (!body.workspaceId) {
         try { await runtime.dispose(); } catch { /* ignore */ }
       }
+    }
+  });
+
+  /** 前端确认结果回传 */
+  router.post('/approval', (req: Request, res: Response) => {
+    const { approvalId, decision } = req.body as {
+      approvalId?: string;
+      decision?: string;
+    };
+    if (!approvalId || (decision !== 'allow' && decision !== 'deny')) {
+      res.status(400).json({ error: 'approvalId and decision (allow|deny) required' });
+      return;
+    }
+    const ok = handleApprovalDecision(approvalId, decision);
+    res.json({ success: ok });
+  });
+
+  /** 撤销最近一次 Agent 写盘 */
+  router.post('/undo', async (req: Request, res: Response) => {
+    try {
+      const { workspaceId, workspaceRoot, sessionId } = req.body as {
+        workspaceId?: string;
+        workspaceRoot?: string;
+        sessionId?: string;
+      };
+      const runtime = await getRuntime(req.body, workspaceRoot);
+      const result = await runtime.undoLastFileChange(sessionId || 'default');
+      res.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ ok: false, reason: msg });
     }
   });
 

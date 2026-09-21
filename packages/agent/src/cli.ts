@@ -9,6 +9,7 @@
  *   npx tsx cli.ts --config mcp-config.json # 指定 MCP 配置文件
  *   npx tsx cli.ts --root /path/to/project  # 设置工作目录
  *   npx tsx cli.ts --url <apiUrl> --model <model> --key <apiKey> # 指定 LLM 模型信息
+ *   npx tsx cli.ts --permission auto-edit|full-auto|suggest      # 权限模式
  *
  * LLM 配置优先级: 命令行参数 (--url/--model/--key) > 环境变量 (LLM_API_URL/LLM_MODEL/LLM_API_KEY) > 内置默认值
  */
@@ -22,6 +23,8 @@ import { McpManager } from './mcp/manager';
 import { ToolCatalog } from './mcp/tool-catalog';
 import type { McpConfig, McpServerEntry } from './mcp/config';
 import type { McpToolInfo } from './mcp/manager';
+import type { Approver, PermissionMode, ApprovalRequest } from './permission';
+import { DEFAULT_PERMISSION_MODE } from './permission';
 
 // ====================== LLM 配置 ======================
 
@@ -51,13 +54,42 @@ function resolveProviderConfig(args: CliArgs): ProviderConfig {
   return { apiUrl, apiKey, model };
 }
 
-function buildRuntimeConfig(provider: ProviderConfig, workDir: string, mcpServers?: McpServerEntry[]): AgentRuntimeConfig {
+function buildRuntimeConfig(
+  provider: ProviderConfig,
+  workDir: string,
+  mcpServers?: McpServerEntry[],
+  permissionMode?: PermissionMode,
+  approver?: Approver,
+): AgentRuntimeConfig {
   return {
     mode: 'build',
     provider,
     workspaceRoot: workDir,
     mcpServers,
+    permissionMode: permissionMode || DEFAULT_PERMISSION_MODE,
+    approver,
   };
+}
+
+/** CLI 终端 y/N 确认（30s 超时视为拒绝） */
+function createCliApprover(rl: readline.Interface): Approver {
+  return (req: ApprovalRequest) =>
+    new Promise<'allow' | 'deny'>((resolve) => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        console.log('\n⏰ 确认超时，已拒绝');
+        resolve('deny');
+      }, 30_000);
+      rl.question(`\n🔒 允许执行 ${req.label}？[y/N] `, (answer) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const a = String(answer || '').trim().toLowerCase();
+        resolve(a === 'y' || a === 'yes' ? 'allow' : 'deny');
+      });
+    });
 }
 
 // ====================== MCP 集成 ======================
@@ -114,24 +146,55 @@ function buildContext(): AgentContext {
   };
 }
 
-async function runAgentLoop(provider: ProviderConfig, mcpManager: McpManager | null, mcpServers: McpServerEntry[], workDir: string): Promise<void> {
-  const runtime = new AgentRuntime(buildRuntimeConfig(provider, workDir, mcpServers));
+async function runAgentLoop(
+  provider: ProviderConfig,
+  mcpServers: McpServerEntry[],
+  workDir: string,
+  permissionMode?: PermissionMode,
+): Promise<void> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    prompt: '\n🧑 You> ',
+  });
+  const approver = createCliApprover(rl);
+
+  // MCP 只由 AgentRuntime 初始化一次，避免 CLI 预连导致 stdio 子进程翻倍
+  const runtime = new AgentRuntime(
+    buildRuntimeConfig(provider, workDir, mcpServers, permissionMode, approver),
+  );
   await runtime.initialize();
 
   const mcpStatus = runtime.mcpStatus;
 
   console.log(`\n🤖 Model: ${provider.model}`);
   console.log(`🌐 API: ${provider.apiUrl}`);
-  console.log(`🔧 Tools: 5 (built-in)${mcpStatus.serverCount ? ` + ${mcpStatus.serverCount} MCP server(s), ${mcpStatus.toolCount} tool(s)` : ''}`);
+  console.log(`🔧 Tools: 7 (built-in)${mcpStatus.serverCount ? ` + ${mcpStatus.serverCount} MCP server(s), ${mcpStatus.toolCount} tool(s)` : ''}`);
   console.log(`📁 Work dir: ${workDir}`);
-  console.log('Commands: /exit, /clear, /tools\n');
+  console.log(`🔐 Permission: ${permissionMode || DEFAULT_PERMISSION_MODE}（写文件需 y 确认）`);
+  console.log('Commands: /exit, /clear, /tools, /undo');
+  console.log('Ctrl+C 取消当前对话（再按或 /exit 退出）\n');
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    prompt: '\n🧑 You> ',
-  });
+  let activeAbort: AbortController | null = null;
+  let cancelledThisTurn = false;
+
   rl.prompt();
+
+  rl.on('SIGINT', () => {
+    if (activeAbort && !activeAbort.signal.aborted) {
+      cancelledThisTurn = true;
+      activeAbort.abort();
+      console.log('\n⏹ 已请求取消…（再按 Ctrl+C 或 /exit 退出）');
+      return;
+    }
+    if (cancelledThisTurn) {
+      console.log('\nBye.');
+      void runtime.dispose().finally(() => process.exit(0));
+      return;
+    }
+    // 空闲时 Ctrl+C：退出
+    void runtime.dispose().finally(() => process.exit(0));
+  });
 
   rl.on('line', async (line: string) => {
     const trimmed = line.trim();
@@ -139,7 +202,6 @@ async function runAgentLoop(provider: ProviderConfig, mcpManager: McpManager | n
 
     if (trimmed === '/exit' || trimmed === '/quit') {
       console.log('\nDisconnecting...');
-      if (mcpManager) await mcpManager.disconnectAll();
       await runtime.dispose();
       rl.close();
       return;
@@ -153,13 +215,27 @@ async function runAgentLoop(provider: ProviderConfig, mcpManager: McpManager | n
 
     if (trimmed === '/tools') {
       printBuiltInTools();
-      printMCPTools(mcpManager);
+      printMCPToolList(runtime.listMcpTools());
+      rl.prompt();
+      return;
+    }
+
+    if (trimmed === '/undo') {
+      const r = await runtime.undoLastFileChange('default');
+      if (r.ok) {
+        console.log(`↩ 已撤销: ${r.path}${r.existed ? '（已恢复原内容）' : '（已删除新建文件）'}`);
+      } else {
+        console.log(`↩ 无法撤销: ${r.reason}`);
+      }
       rl.prompt();
       return;
     }
 
     process.stdout.write('\n🤖 AI> ');
     const startTime = Date.now();
+    cancelledThisTurn = false;
+    activeAbort = new AbortController();
+    const signal = activeAbort.signal;
 
     let thinking = false;
     const clearThinking = () => {
@@ -196,13 +272,23 @@ async function runAgentLoop(provider: ProviderConfig, mcpManager: McpManager | n
             process.stdout.write(`\n❌ ${e.error || 'unknown error'}`);
             break;
         }
-      });
+      }, signal);
 
       const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       // 编辑已下沉为 agent 内建工具(FileWriteTool/FileEditTool),done 后无需再统计 edits。
-      console.log(`\n\n[${elapsed}s] | ${result.toolCalls.length} tool call(s)`);
+      if (signal.aborted) {
+        console.log(`\n\n[${elapsed}s] | 已取消`);
+      } else {
+        console.log(`\n\n[${elapsed}s] | ${result.toolCalls.length} tool call(s)`);
+      }
     } catch (e: any) {
-      console.log(`\n❌ Error: ${e.message}`);
+      if (e && (e.name === 'AbortError' || /abort/i.test(String(e.message || '')))) {
+        console.log(`\n⏹ 已取消`);
+      } else {
+        console.log(`\n❌ Error: ${e.message}`);
+      }
+    } finally {
+      activeAbort = null;
     }
 
     rl.prompt();
@@ -217,8 +303,10 @@ async function runAgentLoop(provider: ProviderConfig, mcpManager: McpManager | n
 
 function printBuiltInTools(): void {
   console.log('\n--- Built-in Tools ---');
-  const tools = ['read_file', 'list_dir', 'search_code', 'bash', 'delegate'];
+  const tools = ['file_edit', 'file_write', 'read_file', 'list_dir', 'search_code', 'bash', 'delegate'];
   const descs: Record<string, string> = {
+    file_edit: 'Edit an existing file (read-before-edit required)',
+    file_write: 'Create or fully rewrite a file (read-before-write for existing)',
     read_file: 'Read a file not currently in context',
     list_dir: 'List directory contents',
     search_code: 'Search code with regex pattern',
@@ -231,15 +319,18 @@ function printBuiltInTools(): void {
   console.log('');
 }
 
-function printMCPTools(mcpManager: McpManager | null): void {
-  if (!mcpManager || mcpManager.serverCount === 0) return;
-  const mcpTools = mcpManager.getTools();
+function printMCPToolList(mcpTools: McpToolInfo[]): void {
   if (mcpTools.length === 0) return;
   console.log('--- MCP Tools ---');
   const catalog = new ToolCatalog();
   catalog.addFromManager(mcpTools);
   catalog.printAll();
   console.log('');
+}
+
+function printMCPTools(mcpManager: McpManager | null): void {
+  if (!mcpManager || mcpManager.serverCount === 0) return;
+  printMCPToolList(mcpManager.getTools());
 }
 
 // ====================== MCP 手动模式 ======================
@@ -317,6 +408,7 @@ interface CliArgs {
   apiUrl?: string;
   apiKey?: string;
   model?: string;
+  permissionMode?: PermissionMode;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -348,6 +440,13 @@ function parseArgs(argv: string[]): CliArgs {
       case '--model':
         result.model = argv[++i];
         break;
+      case '--permission': {
+        const v = argv[++i];
+        if (v === 'suggest' || v === 'auto-edit' || v === 'full-auto') {
+          result.permissionMode = v;
+        }
+        break;
+      }
       default:
         if (!argv[i].startsWith('--') && !result.configPath) {
           result.configPath = argv[i];
@@ -404,20 +503,8 @@ async function main(): Promise<void> {
     case 'agent':
     default: {
       const provider = resolveProviderConfig(args);
-      let mcpManager: McpManager | null = null;
-      let activeServers = mcpServers;
-      if (!args.noMcp && mcpServers.length > 0) {
-        try {
-          const result = await createMcpManager(mcpServers);
-          if (result) {
-            mcpManager = result.manager;
-          }
-        } catch (e: any) {
-          console.error(`MCP connection failed: ${e.message}`);
-          console.error('Continuing with built-in tools only.\n');
-        }
-      }
-      await runAgentLoop(provider, mcpManager, activeServers, args.workDir);
+      // 连接失败由 runtime.initialize 吞掉并记日志，这里不预连 MCP
+      await runAgentLoop(provider, mcpServers, args.workDir, args.permissionMode);
       break;
     }
   }

@@ -113,44 +113,45 @@ function handleMouseUp() {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-primary, #1e1e1e);
+  background: var(--surface-2);
 }
 
 .image-toolbar {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: var(--bg-tertiary, #252526);
-  border-bottom: 1px solid var(--border-color, #3c3c3c);
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
 .image-toolbar button {
-  padding: 3px 10px;
-  font-size: 13px;
-  background: var(--bg-secondary, #2d2d2d);
-  border: 1px solid var(--border-color, #3c3c3c);
-  color: var(--text-primary, #ccc);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--font-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
   cursor: pointer;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
 }
 
 .image-toolbar button:hover {
-  background: var(--bg-hover, #3e3e3e);
-  border-color: var(--accent-color, #007acc);
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .zoom-level {
-  font-size: 12px;
-  color: var(--text-secondary, #999);
+  font-size: var(--font-sm);
+  color: var(--text-muted);
   min-width: 48px;
   text-align: center;
 }
 
 .image-info {
-  font-size: 12px;
-  color: var(--text-secondary, #999);
+  font-size: var(--font-sm);
+  color: var(--text-muted);
   margin-left: auto;
 }
 
@@ -170,9 +171,9 @@ function handleMouseUp() {
 }
 
 .image-error {
-  padding: 20px;
+  padding: var(--space-4);
   text-align: center;
-  color: #f44747;
-  font-size: 14px;
+  color: var(--danger);
+  font-size: var(--font-md);
 }
 </style>

@@ -230,65 +230,92 @@ function handleToolbarDblClick() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 32px;
-  background: var(--bg-tertiary);
-  border-bottom: 1px solid var(--border-color);
-  padding: 0 4px;
+  height: 36px;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-subtle);
+  padding: 0 var(--space-2);
   flex-shrink: 0;
   user-select: none;
   -webkit-app-region: drag;
 }
+
 .toolbar-left {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
   height: 100%;
   -webkit-app-region: no-drag;
 }
+
 .toolbar-right {
   display: flex;
   align-items: center;
   height: 100%;
   -webkit-app-region: no-drag;
 }
+
 .toolbar-center {
   display: flex;
   align-items: center;
   height: 100%;
 }
+
 .toolbar-title {
-  color: var(--text-secondary);
-  font-size: 11px;
-  font-weight: 400;
-  letter-spacing: 0.3px;
+  color: var(--text-muted);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  letter-spacing: 0.2px;
 }
+
+.toolbar :deep(.n-button) {
+  height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.toolbar :deep(.n-button:hover) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.toolbar :deep(.n-button:active) {
+  background: var(--surface-selected);
+  color: var(--text-primary);
+}
+
 .dropdown-trigger-btn {
-  font-size: 12px;
+  font-size: var(--font-sm);
 }
 
 .window-controls {
   display: flex;
   align-items: center;
   height: 100%;
-  margin-left: auto;
+  margin-left: var(--space-1);
 }
+
 .win-btn {
-  width: 46px;
+  width: 40px;
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
   padding: 0;
   -webkit-app-region: no-drag;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
+
 .win-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
+
 .win-close:hover {
   background: #e81123;
   color: #fff;

@@ -6,10 +6,24 @@
  */
 import * as path from 'path';
 
-/** 把用户给定的路径解析为绝对路径,并确保不逃出 workspaceRoot。 */
+/** win32 路径比较时统一小写,避免 C:\Proj 与 c:\proj 被当成不同路径。 */
+function toComparable(p: string): string {
+  return process.platform === 'win32' ? p.toLowerCase() : p;
+}
+
+/**
+ * 把用户给定的路径解析为绝对路径,并确保不逃出 workspaceRoot。
+ *
+ * - root 先 path.resolve,再参与前缀比较(调用方可能传相对 root)
+ * - 前缀比较带 path.sep,防止 /ws 匹配 /ws-evil
+ * - win32 下大小写不敏感
+ */
 export function resolvePath(root: string, target: string): string {
-  const abs = path.resolve(root, target);
-  if (!abs.startsWith(root + path.sep) && abs !== root) {
+  const absRoot = path.resolve(root);
+  const abs = path.resolve(absRoot, target);
+  const rootCmp = toComparable(absRoot);
+  const absCmp = toComparable(abs);
+  if (absCmp !== rootCmp && !absCmp.startsWith(rootCmp + path.sep)) {
     throw new Error(`Path traversal not allowed: ${target}`);
   }
   return abs;

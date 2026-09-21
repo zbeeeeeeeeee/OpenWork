@@ -12,10 +12,14 @@ export function setEditorInstance(editor: typeof instance) {
   instance = editor
 }
 
-/** 销毁编辑器实例并清空引用 */
-export function clearEditorInstance() {
-  if (instance) {
+/** 销毁编辑器实例并清空引用（仅当当前单例就是该实例时） */
+export function clearEditorInstance(onlyIf?: import('monaco-editor').editor.IStandaloneCodeEditor | null) {
+  if (!instance) return
+  if (onlyIf && instance !== onlyIf) return
+  try {
     instance.dispose()
-    instance = null
+  } catch {
+    /* ignore */
   }
+  instance = null
 }

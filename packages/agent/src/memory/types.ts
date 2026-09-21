@@ -21,6 +21,8 @@ export interface ToolCallRecord {
   agentId?: string;
   /** 若由子 agent 产生,记录其父 agent id(委托链) */
   parentAgentId?: string;
+  /** 写盘类工具的结构化变更（file_edit/file_write）；可选，旧数据无此字段 */
+  fileChanges?: import('../types/tool').FileChangeMeta[];
 }
 
 /** 主/子 agent 标识 */

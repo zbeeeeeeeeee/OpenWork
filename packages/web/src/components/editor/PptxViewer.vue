@@ -279,7 +279,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .pptx-viewer {
   height: 100%;
-  background: #323639;
+  background: var(--surface-2);
   display: flex;
   flex-direction: column;
 }
@@ -288,9 +288,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   height: 36px;
-  padding: 0 8px;
-  background: #323639;
-  border-bottom: 1px solid #404346;
+  padding: 0 var(--space-2);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
   user-select: none;
 }
@@ -298,11 +298,16 @@ onBeforeUnmount(() => {
 .toolbar-group {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: var(--space-1);
 }
 
-.toolbar-group:first-child { margin-right: auto; }
-.toolbar-group:last-child { margin-left: auto; }
+.toolbar-group:first-child {
+  margin-right: auto;
+}
+
+.toolbar-group:last-child {
+  margin-left: auto;
+}
 
 .toolbar-btn {
   display: flex;
@@ -310,48 +315,69 @@ onBeforeUnmount(() => {
   justify-content: center;
   min-width: 28px;
   height: 28px;
-  padding: 0 4px;
+  padding: 0 var(--space-1);
   border: none;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: #bbb;
-  font-size: 13px;
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.toolbar-btn:hover:not(:disabled) { background: #4e5255; color: #eee; }
-.toolbar-btn:active:not(:disabled) { background: #5a5e62; }
-.toolbar-btn:disabled { opacity: 0.35; cursor: default; }
-.toolbar-btn.zoom-display { min-width: 48px; font-variant-numeric: tabular-nums; }
+.toolbar-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.toolbar-btn:active:not(:disabled) {
+  background: var(--surface-selected);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.toolbar-btn.zoom-display {
+  min-width: 48px;
+  font-variant-numeric: tabular-nums;
+}
 
 .page-indicator {
   display: flex;
   align-items: center;
-  gap: 2px;
-  color: #bbb;
-  font-size: 13px;
+  gap: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
   font-variant-numeric: tabular-nums;
-  margin: 0 2px;
+  margin: 0 var(--space-1);
 }
 
 .page-input {
   width: 36px;
   height: 24px;
-  background: #1e2022;
-  border: 1px solid #555;
-  border-radius: 3px;
-  color: #eee;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
   text-align: center;
-  font-size: 13px;
+  font-size: var(--font-sm);
   font-variant-numeric: tabular-nums;
   outline: none;
   -moz-appearance: textfield;
 }
 
 .page-input::-webkit-outer-spin-button,
-.page-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.page-total { color: #999; white-space: nowrap; }
+.page-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.page-total {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
 
 .pptx-body {
   flex: 1;
@@ -364,36 +390,39 @@ onBeforeUnmount(() => {
   width: 150px;
   flex-shrink: 0;
   overflow-y: auto;
-  background: #252729;
-  border-right: 1px solid #404346;
-  padding: 8px 0;
+  background: var(--surface-1);
+  border-right: 1px solid var(--border-subtle);
+  padding: var(--space-2) 0;
 }
 
 .thumbnail-item {
-  padding: 6px 12px;
+  padding: var(--space-2) var(--space-3);
   cursor: pointer;
-  transition: background 0.15s;
-  border-left: 3px solid transparent;
+  transition: background var(--transition-fast);
+  border-left: 2px solid transparent;
 }
 
-.thumbnail-item:hover { background: #383b3d; }
+.thumbnail-item:hover {
+  background: var(--surface-hover);
+}
+
 .thumbnail-item.active {
-  background: #3a3d40;
-  border-left-color: #6cb6ff;
+  background: var(--surface-selected);
+  border-left-color: var(--accent);
 }
 
 .thumbnail-label {
   display: block;
-  font-size: 11px;
-  color: #999;
-  margin-bottom: 4px;
+  font-size: var(--font-xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-1);
 }
 
 .thumbnail-preview {
   width: 126px;
   overflow: hidden;
-  background: #fff;
-  border-radius: 2px;
+  background: #ffffff;
+  border-radius: var(--radius-sm);
 }
 
 .thumbnail-preview :deep(.pptx-preview-slide-wrapper) {
@@ -405,12 +434,12 @@ onBeforeUnmount(() => {
   min-width: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  background: #525659;
+  background: var(--surface-2);
 }
 
 .pptx-content {
   width: 100%;
-  background: #525659;
+  background: var(--surface-2);
 }
 
 /* Override the library's fixed-height viewport so all slides stack vertically */
@@ -426,30 +455,30 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  background: var(--editor-bg, #1e1e1e);
-  color: #888;
+  background: var(--surface-2);
+  color: var(--text-muted);
 }
 
 .pptx-unsupported-title {
-  font-size: 1.2em;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: #aaa;
+  font-size: var(--font-md);
+  font-weight: var(--weight-semibold);
+  margin-bottom: var(--space-2);
+  color: var(--text-secondary);
 }
 
 .pptx-unsupported-hint {
-  font-size: 0.9em;
+  font-size: var(--font-sm);
   max-width: 400px;
   text-align: center;
   line-height: 1.5;
 }
 
 .pptx-error {
-  padding: 16px;
-  color: #e74c3c;
-  background: #fdf0ef;
-  border-top: 1px solid #f5c6cb;
-  font-size: 0.85em;
+  padding: var(--space-4);
+  color: var(--danger);
+  background: var(--surface-1);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--font-sm);
   flex-shrink: 0;
 }
 </style>

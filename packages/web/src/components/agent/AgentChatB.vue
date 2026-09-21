@@ -63,11 +63,27 @@
         :providers="providerSettings.providers.value"
         :activeProviderId="providerSettings.activeId.value"
         :currentMode="currentMode"
+        :canUndo="canUndo"
+        :undoing="undoing"
         @select-provider="providerSettings.setActive($event)"
         @update:currentMode="agentCtrl.config.value.mode = $event"
         @open-settings="$emit('open-settings')"
+        @undo-write="handleUndoWrite"
       />
     </template>
+
+    <!-- 权限确认弹窗 -->
+    <ApprovalDialog
+      :visible="approvalDialog.dialogVisible.value"
+      :toolName="approvalDialog.pendingApproval.value?.toolName || ''"
+      :label="approvalDialog.pendingApproval.value?.label || ''"
+      :preview="approvalDialog.pendingApproval.value?.preview"
+      :mode="approvalDialog.pendingApproval.value?.mode || ''"
+      :errorMessage="approvalDialog.errorMessage.value"
+      @allow="approvalDialog.resolveApproval('allow')"
+      @deny="approvalDialog.resolveApproval('deny')"
+      @retry="approvalDialog.retryApproval()"
+    />
   </div>
 </template>
 
@@ -80,12 +96,15 @@ import { useLLMSettings } from '../../composables/useLLMSettings';
 import { useEditorStore } from '../../stores/editor';
 import { useAgent } from '../../composables/useAgent';
 import { useSessionMessages } from '../../composables/useSessionMessages';
+import { reloadTabsForPaths } from '../../composables/useFileSystem';
 import type { DisplayMessage } from '@openwork/agent';
 import ChatSessionTabs from './chat-b/ChatSessionTabs.vue';
 import ChatEmptyState from './chat-b/ChatEmptyState.vue';
 import ChatMessageItem from './chat-b/ChatMessageItem.vue';
 import ChatInputArea from './chat-b/ChatInputArea.vue';
 import ChatFooter from './chat-b/ChatFooter.vue';
+import ApprovalDialog from './ApprovalDialog.vue';
+import { useApprovalDialog } from '../../composables/useApprovalDialog';
 import { webAgentLog } from '../../services/logger';
 
 defineEmits<{
@@ -99,6 +118,7 @@ const editorStore = useEditorStore();
 const input = ref('');
 
 const agentCtrl = useAgent();
+const approvalDialog = useApprovalDialog();
 
 const { messages: persistedMessages, refresh: refreshMessages } = useSessionMessages(
   () => editorStore.activeWorkspaceId,
@@ -137,26 +157,39 @@ async function createNewSession() {
   await sessionStore.createSession();
 }
 
-// ===== 自动滚动 =====
+// ===== 自动滚动（用户上翻时不打断）=====
 const messagesContainer = ref<HTMLElement>();
 let scrollRafId = 0;
+/** 距底部多少像素内视为「贴底」，才继续自动滚动 */
+const NEAR_BOTTOM_PX = 80;
+
+function isNearBottom(): boolean {
+  const el = messagesContainer.value;
+  if (!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX;
+}
 
 function scrollToBottom() {
   const el = messagesContainer.value;
   if (el) el.scrollTop = el.scrollHeight;
 }
 
-function scheduleScroll(_force = false) {
+function scheduleScroll(force = false) {
   cancelAnimationFrame(scrollRafId);
-  scrollRafId = requestAnimationFrame(() => scrollToBottom());
+  scrollRafId = requestAnimationFrame(() => {
+    if (force || isNearBottom()) scrollToBottom();
+  });
 }
 
 onMounted(() => {
   providerSettings.reload();
+  agentCtrl.setApproveHandler((req) => approvalDialog.openApproval(req));
+  webAgentLog.info('approval handler connected (ApprovalDialog)');
 });
 
 onUnmounted(() => {
   cancelAnimationFrame(scrollRafId);
+  approvalDialog.cancelAllPending();
 });
 
 async function send() {
@@ -193,12 +226,29 @@ async function send() {
     activeFilePath,
     {
       onChunk: () => scheduleScroll(false),
+      onFilesChanged: async (paths) => {
+        webAgentLog.info('send(B): agent changed files', { paths });
+        try {
+          await reloadTabsForPaths(paths);
+        } catch (e: any) {
+          webAgentLog.warn(`reloadTabsForPaths failed: ${e.message}`);
+        }
+      },
       onDone: async () => {
         webAgentLog.info('send(B): streamMessage completed, refreshing from backend');
-        await refreshMessages();
-        pendingUserMessage.value = null;
-        agentCtrl.clearLive();
-        scrollToBottom();
+        approvalDialog.cancelAllPending();
+        try {
+          await refreshMessages();
+        } catch (e: any) {
+          webAgentLog.warn(`refresh after stream failed: ${e.message}`);
+        }
+        // 后端已有权威消息时再清掉临时态，避免失败瞬间「闪没」
+        if (persistedMessages.value.length > 0) {
+          pendingUserMessage.value = null;
+          agentCtrl.clearLive();
+        }
+        // 仅贴底时才跟滚，用户上翻阅读时不拉回底部
+        scheduleScroll(false);
       },
       onError: (err) => {
         webAgentLog.error(`send(B): streamMessage failed: ${err.message}`, { name: err.name, message: err.message });
@@ -207,7 +257,8 @@ async function send() {
   );
 
   await nextTick();
-  scrollToBottom();
+  // 用户主动发送时强制滚到底
+  scheduleScroll(true);
 
   try {
     await streamPromise;
@@ -218,6 +269,41 @@ async function send() {
 
 function stopStream() {
   agentCtrl.cancelStream();
+}
+
+// ===== 撤销 Agent 写盘 =====
+const undoing = ref(false);
+const canUndo = ref(true);
+
+async function handleUndoWrite() {
+  if (undoing.value) return;
+  undoing.value = true;
+  try {
+    const workspaceRoot = editorStore.workspaceRoot || undefined;
+    const workspaceId = editorStore.activeWorkspaceId || undefined;
+    const sessionId = sessionStore.activeSessionId || undefined;
+    const res = await fetch(
+      (typeof __SERVER_PORT__ !== 'undefined' ? `http://localhost:${__SERVER_PORT__}` : '') +
+        '/api/agent/undo',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workspaceRoot, workspaceId, sessionId }),
+      },
+    );
+    const data = await res.json();
+    if (data.ok) {
+      // 恢复后刷新编辑器标签
+      await reloadTabsForPaths([data.path]);
+      webAgentLog.info('undo write ok', { path: data.path });
+    } else {
+      webAgentLog.warn(`undo write: ${data.reason || 'empty stack'}`);
+    }
+  } catch (e: any) {
+    webAgentLog.error(`undo write failed: ${e.message}`);
+  } finally {
+    undoing.value = false;
+  }
 }
 </script>
 

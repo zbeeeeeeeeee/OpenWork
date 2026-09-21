@@ -113,7 +113,7 @@ describe('SessionMemory', () => {
     it('roundtrips entries', () => {
       const m = new SessionMemory('s1');
       m.appendUserMessage('q');
-      m.appendAssistantMessage({ content: 'a', thinking: 't' });
+      m.appendAssistantMessage({ content: 'a', thinking: 'step by step reasoning' });
       const data = m.serialize();
       expect(data.schemaVersion).toBe(1);
       expect(data.entries).toHaveLength(2);
@@ -121,7 +121,7 @@ describe('SessionMemory', () => {
       const m2 = new SessionMemory('s1');
       m2.deserialize(data);
       expect(m2.size).toBe(2);
-      expect(m2.projectToDisplay()[1]).toMatchObject({ role: 'assistant', thinking: 't' });
+      expect(m2.projectToDisplay()[1]).toMatchObject({ role: 'assistant', thinking: 'step by step reasoning' });
     });
 
     it('starts fresh on invalid data', () => {

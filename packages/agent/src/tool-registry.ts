@@ -1,4 +1,5 @@
-import type { ITool } from './types/tool';
+import type { ITool, OpenAIFunctionDefinition } from './types/tool';
+import { toolToOpenAIFunction } from './tools/openai-function';
 import { createLogger } from './logger';
 
 const log = createLogger('ToolRegistry');
@@ -38,6 +39,14 @@ export class ToolRegistry {
   /** 所有已注册的标签名，供解析器使用 */
   getTagNames(): string[] {
     return Array.from(this.tools.keys());
+  }
+
+  /**
+   * 导出为 OpenAI tools[]（function calling 主路径）。
+   * 顺序与注册顺序一致；同名工具在 register 时已覆盖。
+   */
+  listOpenAITools(): OpenAIFunctionDefinition[] {
+    return Array.from(this.tools.values()).map(toolToOpenAIFunction);
   }
 
   /**

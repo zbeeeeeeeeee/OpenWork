@@ -9,7 +9,6 @@
       <n-tree
         v-else
         ref="treeRef"
-        block-line
         expand-on-click
         :data="treeData"
         :expanded-keys="expandedKeysList"
@@ -354,6 +353,7 @@ function handleMenuSelect(key: string, payload: ContextMenuPayload) {
 .tree-spin {
   flex: 1;
   overflow-y: auto;
+  padding: var(--space-1) var(--space-1) var(--space-2);
 }
 
 .tree-spin :deep(.n-spin-content) {
@@ -366,10 +366,16 @@ function handleMenuSelect(key: string, payload: ContextMenuPayload) {
 
 :deep(.n-tree) {
   background: transparent;
-}
-
-:deep(.n-tree-node) {
-  height: 28px;
+  --n-font-size: var(--font-base);
+  --n-node-wrapper-padding: 1px 0;
+  --n-node-border-radius: var(--radius-sm);
+  --n-node-color-hover: var(--surface-hover);
+  --n-node-color-pressed: var(--surface-selected);
+  --n-node-color-active: var(--surface-selected);
+  --n-node-text-color: var(--text-secondary);
+  --n-node-text-color-disabled: var(--text-disabled);
+  --n-node-arrow-color: var(--text-muted);
+  --n-line-color: var(--border-subtle);
 }
 
 :deep(.n-tree-node-content) {
@@ -377,15 +383,20 @@ function handleMenuSelect(key: string, payload: ContextMenuPayload) {
   min-width: 0;
 }
 
+:deep(.n-tree-node--selected .n-tree-node-content) {
+  color: var(--text-primary);
+}
+
 .tree-inline-input-wrapper {
   flex: 1;
   min-width: 0;
-  padding-right: 4px;
+  padding-right: var(--space-1);
 }
 
 .tree-inline-input-wrapper :deep(.n-input) {
-  --n-height: 22px;
-  --n-font-size: 13px;
+  --n-height: 24px;
+  --n-font-size: var(--font-base);
+  --n-border-radius: var(--radius-sm);
 }
 
 .tree-delete-btn {
